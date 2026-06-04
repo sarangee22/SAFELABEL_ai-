@@ -1,3 +1,5 @@
+import { AppColors, Radius, SoftShadow } from "@/constants/theme";
+import { formatRestrictionInfo } from "@/utils/restriction-utils";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CameraType, CameraView, useCameraPermissions } from "expo-camera";
@@ -15,6 +17,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { API_ENDPOINTS } from "../constants/api";
 
 const PROFILE_STORAGE_KEY = "safelabel_user_profile";
 const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";
@@ -25,6 +28,66 @@ type UserProfile = {
   sensitivity: string;
   allergies: string[];
   avoidIngredients: string[];
+};
+
+type PublicIngredientInfo = {
+  INGR_KOR_NAME?: string | null;
+  INGR_ENG_NAME?: string | null;
+  CAS_NO?: string | null;
+  ORIGIN_MAJOR_KOR_NAME?: string | null;
+  INGR_SYNONYM?: string | null;
+};
+
+type PublicRestrictedInfo = {
+  REGULATE_TYPE?: string | null;
+  INGR_STD_NAME?: string | null;
+  INGR_ENG_NAME?: string | null;
+  CAS_NO?: string | null;
+  INGR_SYNONYM?: string | null;
+  COUNTRY_NAME?: string | null;
+  NOTICE_INGR_NAME?: string | null;
+  PROVIS_ATRCL?: string | null;
+  LIMIT_COND?: string | null;
+};
+
+type PublicRestrictedNationInfo = {
+  REGL_CODE?: string | null;
+  INGR_CODE?: string | null;
+  COUNTRY_NAME?: string | null;
+  NOTICE_INGR_NAME?: string | null;
+  PROVIS_ATRCL?: string | null;
+  LIMIT_COND?: string | null;
+  REGULATE_TYPE?: string | null;
+};
+
+type PublicRegulationInfo = {
+  SN?: string | null;
+  INGR_STD_NAME?: string | null;
+  INGR_ENG_NAME?: string | null;
+  PROH_NATIONAL?: string | null;
+  LIMIT_NATIONAL?: string | null;
+};
+
+type PublicDataUserSummary = {
+  safetyLevel: string;
+  englishName: string;
+  casNo: string;
+  definition: string;
+  simpleSummary: string;
+  restrictionSummary: string;
+  countrySummary: string;
+  userAdvice: string;
+  hasRestriction: boolean;
+};
+
+type PublicDataInfo = {
+  ingredientName: string;
+  ingredientInfo: PublicIngredientInfo[];
+  restrictedInfo: PublicRestrictedInfo[];
+  restrictedNationInfo: PublicRestrictedNationInfo[];
+  regulationInfo: PublicRegulationInfo[];
+  userSummary?: PublicDataUserSummary | null;
+  hasPublicData: boolean;
 };
 
 type MatchedIngredient = {
@@ -38,6 +101,7 @@ type MatchedIngredient = {
   restrictedReason: string;
   allergenReason: string;
   riskWeight: number;
+  publicData?: PublicDataInfo | null;
 };
 
 type RiskReason = {
@@ -56,6 +120,8 @@ type AnalysisResult = {
   riskReasons: RiskReason[];
   summary: string;
   recommendation: string;
+  aiProvider: "openai" | "fallback";
+  aiModel: string | null;
 };
 
 type AnalysisHistoryItem = AnalysisResult & {
@@ -79,6 +145,7 @@ export default function AnalyzeScreen() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(
     null
   );
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   const loadUserProfile = async (): Promise<UserProfile> => {
     try {
@@ -199,19 +266,27 @@ export default function AnalyzeScreen() {
   }, [mode]);
 
   useEffect(() => {
-    if (mode === "gallery" && !didOpenGalleryRef.current) {
-      didOpenGalleryRef.current = true;
-      setIsCameraOpen(false);
-      handlePickImage();
-    }
+    const timeoutId = setTimeout(() => {
+      if (mode === "gallery" && !didOpenGalleryRef.current) {
+        didOpenGalleryRef.current = true;
+        setIsCameraOpen(false);
+        handlePickImage();
+      }
 
-    if (mode === "camera") {
-      didOpenGalleryRef.current = false;
-      setIsCameraOpen(true);
-      setCapturedImage(null);
-      setAnalysisResult(null);
-    }
+      if (mode === "camera") {
+        didOpenGalleryRef.current = false;
+        setIsCameraOpen(true);
+        setCapturedImage(null);
+        setAnalysisResult(null);
+      }
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
   }, [mode, handlePickImage]);
+
+  useEffect(() => {
+    loadUserProfile().then(setUserProfile);
+  }, []);
 
   if (mode === "gallery" && !capturedImage && !analysisResult) {
     return <View style={styles.loadingScreen} />;
@@ -226,7 +301,7 @@ export default function AnalyzeScreen() {
       return (
         <View style={styles.permissionScreen}>
           <View style={styles.permissionIconBox}>
-            <Ionicons name="camera-outline" size={34} color="#5B7CFA" />
+            <Ionicons name="camera-outline" size={34} color={AppColors.primary} />
           </View>
 
           <Text style={styles.permissionTitle}>카메라 권한이 필요해요</Text>
@@ -259,7 +334,7 @@ export default function AnalyzeScreen() {
       setCapturedImage(photo.uri);
       setIsCameraOpen(false);
       setAnalysisResult(null);
-    } catch (error) {
+    } catch {
       Alert.alert("오류", "사진 촬영 중 문제가 발생했습니다.");
     }
   };
@@ -308,7 +383,7 @@ export default function AnalyzeScreen() {
       console.log("서버로 이미지 전송 시작:", capturedImage);
       console.log("분석에 반영되는 사용자 프로필:", profile);
 
-      const response = await fetch("http://localhost:4000/api/ocr/analyze", {
+      const response = await fetch(API_ENDPOINTS.analyzeOcr, {
         method: "POST",
         body: formData,
       });
@@ -331,6 +406,8 @@ export default function AnalyzeScreen() {
         riskReasons: data.riskReasons || [],
         summary: data.summary,
         recommendation: data.recommendation,
+        aiProvider: data.aiProvider === "openai" ? "openai" : "fallback",
+        aiModel: data.aiModel || null,
       };
 
       setAnalysisResult(analysisData);
@@ -381,7 +458,7 @@ export default function AnalyzeScreen() {
                   style={styles.subControlButton}
                   onPress={handlePickImage}
                 >
-                  <Ionicons name="image-outline" size={24} color="#FFFFFF" />
+                  <Ionicons name="image-outline" size={24} color={AppColors.card} />
                   <Text style={styles.subControlText}>갤러리</Text>
                 </Pressable>
 
@@ -403,7 +480,7 @@ export default function AnalyzeScreen() {
                   <Ionicons
                     name="camera-reverse-outline"
                     size={24}
-                    color="#FFFFFF"
+                    color={AppColors.card}
                   />
                   <Text style={styles.subControlText}>전환</Text>
                 </Pressable>
@@ -418,7 +495,7 @@ export default function AnalyzeScreen() {
         >
           <View style={styles.header}>
             <View style={styles.iconBox}>
-              <Ionicons name="scan-outline" size={28} color="#5B7CFA" />
+              <Ionicons name="scan-outline" size={28} color={AppColors.primary} />
             </View>
 
             <View style={styles.headerTextBox}>
@@ -436,7 +513,7 @@ export default function AnalyzeScreen() {
 
               <View style={styles.previewActions}>
                 <Pressable style={styles.secondaryButton} onPress={handleRetake}>
-                  <Ionicons name="camera-outline" size={18} color="#5B7CFA" />
+                  <Ionicons name="camera-outline" size={18} color={AppColors.primary} />
                   <Text style={styles.secondaryButtonText}>다시 촬영</Text>
                 </Pressable>
 
@@ -444,7 +521,7 @@ export default function AnalyzeScreen() {
                   style={styles.secondaryButton}
                   onPress={handlePickImage}
                 >
-                  <Ionicons name="image-outline" size={18} color="#5B7CFA" />
+                  <Ionicons name="image-outline" size={18} color={AppColors.primary} />
                   <Text style={styles.secondaryButtonText}>다른 이미지</Text>
                 </Pressable>
               </View>
@@ -457,10 +534,10 @@ export default function AnalyzeScreen() {
             disabled={isAnalyzing}
           >
             {isAnalyzing ? (
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={AppColors.card} />
             ) : (
               <>
-                <Ionicons name="sparkles-outline" size={20} color="#FFFFFF" />
+                <Ionicons name="sparkles-outline" size={20} color={AppColors.card} />
                 <Text style={styles.analyzeButtonText}>OCR 성분 분석하기</Text>
               </>
             )}
@@ -476,166 +553,549 @@ export default function AnalyzeScreen() {
             </View>
           )}
 
-          {analysisResult && <AnalysisResultCard result={analysisResult} />}
+          {analysisResult && (
+            <AnalysisResultCard
+              result={analysisResult}
+              userProfile={userProfile}
+              onSave={() =>
+                analysisResult && saveAnalysisHistory(analysisResult, capturedImage ?? undefined)
+              }
+            />
+          )}
         </ScrollView>
       )}
     </View>
   );
 }
 
-function AnalysisResultCard({ result }: { result: AnalysisResult }) {
+function AnalysisResultCard({
+  result,
+  userProfile,
+  onSave,
+}: {
+  result: AnalysisResult;
+  userProfile: UserProfile | null;
+  onSave: () => void;
+}) {
   const riskColor = getRiskColor(result.riskLevel);
-  const riskLabel = getRiskLabel(result.riskLevel);
+  const verdict = getOverallVerdict(result);
+  const confidence = getAnalysisConfidence(result.matchedIngredients);
+  const recommendationLines = getSkinAdvice(result, userProfile);
+  const restrictionLines = summarizePublicDataRestrictions(result);
+  const matchedCount = result.matchedIngredients.length;
 
   return (
     <View style={styles.analysisCard}>
-      <View style={styles.resultHeader}>
-        <View style={styles.resultTitleBox}>
-          <Text style={styles.resultLabel}>분석 결과</Text>
-          <Text style={styles.resultProductName}>{result.productName}</Text>
+      <View style={styles.overallCard}>
+        <View style={styles.overallHeader}>
+          <View>
+            <Text style={styles.overallLabel}>종합 판단</Text>
+            <Text style={styles.overallTitle}>{verdict.label}</Text>
+          </View>
+          <View style={[styles.overallBadge, { backgroundColor: verdict.bg }]}> 
+            <Text style={[styles.overallBadgeText, { color: verdict.text }]}> 
+              {verdict.stage}
+            </Text>
+          </View>
         </View>
+        <Text style={styles.overallText}>{verdict.message}</Text>
+      </View>
 
-        <View style={[styles.riskBadge, { backgroundColor: riskColor.bg }]}>
-          <Text style={[styles.riskBadgeText, { color: riskColor.text }]}>
-            {riskLabel}
+      <View style={styles.summaryRow}>
+        <View style={[styles.summaryCard, { borderColor: riskColor.border }]}> 
+          <Text style={styles.summaryTitle}>위험도 점수</Text>
+          <Text style={[styles.summaryValue, { color: riskColor.text }]}> 
+            {result.riskScore}점
           </Text>
+          <Text style={styles.summarySubtitle}>{getRiskLabel(result.riskLevel)}</Text>
         </View>
-      </View>
 
-      <View style={styles.riskScoreBox}>
-        <Text style={styles.riskScoreLabel}>사용자 맞춤 위험도</Text>
-        <Text style={[styles.riskScore, { color: riskColor.text }]}>
-          {result.riskScore}점
-        </Text>
-
-        <View style={styles.riskBarBackground}>
-          <View
-            style={[
-              styles.riskBarFill,
-              {
-                width: `${result.riskScore}%`,
-                backgroundColor: riskColor.text,
-              },
-            ]}
-          />
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>공공데이터 확인</Text>
+          <Text style={styles.summaryValue}>{matchedCount}개</Text>
+          <Text style={styles.summarySubtitle}>매칭 성분 수</Text>
         </View>
       </View>
 
       <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>AI 요약</Text>
-        <Text style={styles.infoText}>{result.summary}</Text>
+        <Text style={styles.infoTitle}>내 피부 기준 맞춤 안내</Text>
+        {recommendationLines.map((line, index) => (
+          <Text key={index} style={styles.infoText}>
+            • {line}
+          </Text>
+        ))}
       </View>
 
       <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>주의 성분</Text>
-        <Text style={styles.infoText}>
+        <View style={styles.infoTitleRow}>
+          <Text style={styles.infoTitle}>주의 성분 요약</Text>
+          <Text style={styles.sourceLabel}>{result.cautionIngredients.length}개</Text>
+        </View>
+        {result.cautionIngredients.length > 0 ? (
+          <Text style={styles.infoText}>
+            {result.cautionIngredients.join(" · ")}
+          </Text>
+        ) : (
+          <Text style={styles.infoText}>주의 성분이 감지되지 않았습니다.</Text>
+        )}
+        <Text style={[styles.infoText, styles.noteText]}>
           {result.cautionIngredients.length > 0
-            ? result.cautionIngredients.join(", ")
-            : "특별한 주의 성분 없음"}
+            ? "이 성분들은 피부 프로필 또는 공공데이터 기준에서 주의가 필요한 성분입니다."
+            : "현재 프로필 기준으로 주의 성분이 적습니다."}
         </Text>
       </View>
 
       <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>주요 성분</Text>
-        <Text style={styles.infoText}>
-          {result.mainIngredients.length > 0
-            ? result.mainIngredients.join(", ")
-            : "추출된 성분이 없습니다."}
-        </Text>
-      </View>
-
-      <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>공공데이터 매칭 성분</Text>
-
-        {result.matchedIngredients.length > 0 ? (
-          result.matchedIngredients.map((item, index) => (
-            <View
-              key={`${item.standardName}-${index}`}
-              style={styles.ingredientAnalysisItem}
-            >
-              <View style={styles.ingredientTopRow}>
-                <Text style={styles.ingredientAnalysisName}>
-                  {item.standardName}
-                </Text>
-
-                <View
-                  style={[
-                    styles.matchBadge,
-                    item.isMatched ? styles.matchedBadge : styles.unmatchedBadge,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.matchBadgeText,
-                      item.isMatched
-                        ? styles.matchedBadgeText
-                        : styles.unmatchedBadgeText,
-                    ]}
-                  >
-                    {item.isMatched ? "매칭됨" : "미매칭"}
-                  </Text>
-                </View>
-              </View>
-
-              {item.englishName ? (
-                <Text style={styles.ingredientAnalysisSub}>
-                  {item.englishName}
-                </Text>
-              ) : null}
-
-              {item.description ? (
-                <Text style={styles.ingredientAnalysisText}>
-                  {item.description}
-                </Text>
-              ) : null}
-
-              {(item.isRestricted || item.isAllergen) && (
-                <View style={styles.warningBox}>
-                  <Ionicons
-                    name="warning-outline"
-                    size={16}
-                    color="#D94C5F"
-                  />
-                  <Text style={styles.warningText}>
-                    {item.restrictedReason || item.allergenReason}
-                  </Text>
-                </View>
-              )}
-            </View>
-          ))
-        ) : (
-          <Text style={styles.infoText}>
-            공공데이터와 매칭된 성분이 아직 없습니다.
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>위험도 판단 근거</Text>
-
-        {result.riskReasons.length > 0 ? (
-          result.riskReasons.map((item, index) => (
-            <View key={`${item.ingredient}-${index}`} style={styles.reasonItem}>
-              <Text style={styles.reasonIngredient}>{item.ingredient}</Text>
-              <Text style={styles.reasonText}>{item.reason}</Text>
-            </View>
-          ))
-        ) : (
-          <Text style={styles.infoText}>
-            현재 기준에서는 특별한 위험도 상승 근거가 적게 감지되었습니다.
-          </Text>
-        )}
-      </View>
-
-      <View style={styles.recommendBox}>
-        <Ionicons name="bulb-outline" size={20} color="#22A06B" />
-        <View style={styles.recommendTextBox}>
-          <Text style={styles.recommendTitle}>AI 추천</Text>
-          <Text style={styles.recommendText}>{result.recommendation}</Text>
+        <View style={styles.infoTitleRow}>
+          <Text style={styles.infoTitle}>공공데이터 매칭 정보</Text>
+          <Text style={styles.sourceLabel}>{matchedCount}개 확인</Text>
         </View>
+        {restrictionLines.length > 0 ? (
+          restrictionLines.map((line, index) => (
+            <Text key={index} style={styles.infoText}>
+              • {line}
+            </Text>
+          ))
+        ) : (
+          <Text style={styles.infoText}>
+            공공데이터에서 확인된 제한 정보가 없습니다.
+          </Text>
+        )}
+      </View>
+
+      <View style={styles.infoBox}>
+        <Text style={styles.infoTitle}>전체 성분 리스트</Text>
+        {result.matchedIngredients.map((item, index) => {
+          const itemStatus = getIngredientStatus(item);
+          const restrictionInfo = formatRestrictionInfo([
+            item.publicData?.restrictedInfo,
+            item.publicData?.restrictedNationInfo,
+            item.publicData?.regulationInfo,
+          ]);
+
+          return (
+            <View key={`${item.standardName || item.originalName}-${index}`} style={styles.ingredientRow}>
+              <View style={styles.ingredientRowText}>
+                <Text style={styles.ingredientName}>{item.standardName || item.originalName}</Text>
+                <Text style={styles.ingredientSubText} numberOfLines={1}>
+                  {item.isMatched ? "공공데이터 매칭" : "정보 없음"}
+                  {restrictionInfo.length > 0 ? ` · ${restrictionInfo[0]}` : ""}
+                </Text>
+              </View>
+              <View style={[styles.statusBadge, itemStatus.bg]}>
+                <Text style={[styles.statusBadgeText, itemStatus.text]}>{itemStatus.label}</Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.buttonRow}>
+        <Pressable style={styles.actionButton} onPress={onSave}>
+          <Text style={styles.actionButtonText}>분석 결과 저장</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.actionButton, styles.secondaryActionButton]}
+          onPress={() => router.push("/history")}
+        >
+          <Text style={[styles.actionButtonText, styles.secondaryActionText]}>
+            기록 보기
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
+}
+
+function getOverallVerdict(result: AnalysisResult) {
+  const cautionCount = result.cautionIngredients.length;
+  const hasHighRisk = result.riskLevel === "high";
+  const hasWarning = result.riskLevel === "medium" || cautionCount > 0;
+
+  if (hasHighRisk) {
+    return {
+      label: "위험",
+      stage: "주의 필요",
+      message:
+        "이 제품에는 위험도와 주의 성분이 함께 감지되었습니다. 사용 전 다시 확인하고 전문가 상담을 권장합니다.",
+      bg: AppColors.riskSoft,
+      text: AppColors.risk,
+    };
+  }
+
+  if (hasWarning) {
+    return {
+      label: "주의",
+      stage: "신중히 사용",
+      message:
+        "제품에 주의 성분이 포함되어 있습니다. 피부 타입과 피하고 싶은 성분을 고려해 사용 여부를 결정하세요.",
+      bg: AppColors.cautionSoft,
+      text: AppColors.caution,
+    };
+  }
+
+  return {
+    label: "안전",
+    stage: "사용 가능",
+    message:
+      "현재 프로필과 공공데이터 기준에서는 큰 문제가 감지되지 않았습니다. 단, 개인 피부 상태에 따라 다를 수 있습니다.",
+    bg: AppColors.mintSoft,
+    text: AppColors.safe,
+  };
+}
+
+function getSkinAdvice(result: AnalysisResult, profile: UserProfile | null) {
+  if (!profile) {
+    return [
+      "프로필을 설정하면 개인 맞춤 안내를 받을 수 있습니다.",
+    ];
+  }
+
+  const lines: string[] = [];
+  const normalizedAvoid = profile.avoidIngredients.map((value) =>
+    String(value || "").toLowerCase()
+  );
+  const normalizedCaution = result.cautionIngredients.map((text) =>
+    String(text || "").toLowerCase()
+  );
+  const matchedAvoided = normalizedAvoid.filter((avoid) =>
+    avoid && normalizedCaution.some((caution) => caution.includes(avoid))
+  );
+
+  if (matchedAvoided.length > 0) {
+    lines.push(
+      `프로필에서 피하고 싶은 성분이 포함되었습니다: ${Array.from(new Set(matchedAvoided)).join(", ")}`
+    );
+  }
+
+  if (profile.sensitivity === "민감" || profile.sensitivity === "매우 민감") {
+    lines.push(
+      "민감 피부이므로 향료, 에탄올, 색소 등 자극 가능 성분에 더 주의하세요."
+    );
+  }
+
+  if (lines.length === 0) {
+    lines.push(
+      "현재 프로필 기준으로 이 제품은 특별히 주의할 요소가 많지 않습니다."
+    );
+  }
+
+  return lines;
+}
+
+function summarizePublicDataRestrictions(result: AnalysisResult) {
+  const lines = result.matchedIngredients.flatMap((item) =>
+    formatRestrictionInfo([
+      item.publicData?.restrictedInfo,
+      item.publicData?.restrictedNationInfo,
+      item.publicData?.regulationInfo,
+      item.publicData?.userSummary?.restrictionSummary,
+      item.publicData?.userSummary?.countrySummary,
+    ])
+  );
+
+  return Array.from(new Set(lines));
+}
+
+function getIngredientStatus(item: MatchedIngredient) {
+  const restrictionLines = formatRestrictionInfo([
+    item.publicData?.restrictedInfo,
+    item.publicData?.restrictedNationInfo,
+    item.publicData?.regulationInfo,
+  ]);
+  const isRestricted = item.isRestricted || restrictionLines.some((line) => line.includes("사용 제한"));
+
+  if (isRestricted) {
+    return {
+      label: "주의",
+      bg: styles.statusBadgeWarning,
+      text: styles.statusBadgeWarningText,
+    };
+  }
+
+  if (item.isMatched) {
+    return {
+      label: "안전",
+      bg: styles.statusBadgeSafe,
+      text: styles.statusBadgeSafeText,
+    };
+  }
+
+  return {
+    label: "정보 없음",
+    bg: styles.statusBadgeNeutral,
+    text: styles.statusBadgeNeutralText,
+  };
+}
+
+function getAnalysisConfidence(matchedIngredients: MatchedIngredient[]) {
+  const matchedCount = matchedIngredients.filter(hasPublicDataMatch).length;
+
+  if (matchedCount >= 5) {
+    return {
+      label: "높음",
+      message: "공공데이터와 매칭된 성분이 충분해 분석 신뢰도가 높습니다.",
+      matchedCount,
+      bg: AppColors.mintSoft,
+      border: "#BDEFE4",
+      text: AppColors.safe,
+    };
+  }
+
+  if (matchedCount >= 2) {
+    return {
+      label: "보통",
+      message:
+        "일부 성분이 공공데이터와 매칭되었습니다. 성분명이 이상하면 다시 촬영해 주세요.",
+      matchedCount,
+      bg: AppColors.cautionSoft,
+      border: "#F8DCA0",
+      text: AppColors.caution,
+    };
+  }
+
+  return {
+    label: "낮음",
+    message:
+      "공공데이터 매칭이 적습니다. OCR 인식 결과를 확인하거나 다시 촬영해 주세요.",
+    matchedCount,
+    bg: AppColors.riskSoft,
+    border: "#FFC6CE",
+    text: AppColors.risk,
+  };
+}
+
+function hasPublicDataMatch(item: MatchedIngredient) {
+  const publicData = item.publicData;
+
+  return (
+    publicData?.hasPublicData === true ||
+    (publicData?.ingredientInfo || []).length > 0 ||
+    (publicData?.restrictedInfo || []).length > 0 ||
+    (publicData?.restrictedNationInfo || []).length > 0 ||
+    (publicData?.regulationInfo || []).length > 0
+  );
+}
+
+function IngredientPublicDataCard({ item }: { item: MatchedIngredient }) {
+  const publicData = item.publicData;
+
+  const ingredientInfo = publicData?.ingredientInfo || [];
+  const restrictedInfo = publicData?.restrictedInfo || [];
+  const restrictedNationInfo = publicData?.restrictedNationInfo || [];
+  const regulationInfo = publicData?.regulationInfo || [];
+
+  const restrictionLines = formatRestrictionInfo([
+    restrictedInfo,
+    restrictedNationInfo,
+    regulationInfo,
+    publicData?.userSummary?.restrictionSummary,
+    publicData?.userSummary?.countrySummary,
+  ]);
+
+  let firstIngredientInfo = getBestIngredientInfo(item, ingredientInfo);
+  const userSummary = publicData?.userSummary;
+  if (userSummary) {
+    firstIngredientInfo = {
+      ...(firstIngredientInfo || {}),
+      INGR_ENG_NAME: userSummary.englishName || firstIngredientInfo?.INGR_ENG_NAME,
+      CAS_NO: userSummary.casNo || firstIngredientInfo?.CAS_NO,
+      ORIGIN_MAJOR_KOR_NAME:
+        userSummary.definition || firstIngredientInfo?.ORIGIN_MAJOR_KOR_NAME,
+      INGR_SYNONYM: "",
+    };
+  }
+  const hasIngredientInfo = ingredientInfo.length > 0;
+  const hasRestrictedInfo = restrictedInfo.length > 0;
+  const hasRestrictedNationInfo = restrictedNationInfo.length > 0;
+  const hasRegulationInfo = regulationInfo.length > 0;
+
+  const hasAnyPublicData =
+    publicData?.hasPublicData === true ||
+    hasIngredientInfo ||
+    hasRestrictedInfo ||
+    hasRestrictedNationInfo ||
+    hasRegulationInfo;
+  const hasPublicDataRestriction = userSummary?.hasRestriction === true;
+
+  return (
+    <View style={styles.ingredientAnalysisItem}>
+      <View style={styles.ingredientTopRow}>
+        <Text style={styles.ingredientAnalysisName}>
+          {item.standardName || item.originalName}
+        </Text>
+
+        <View
+          style={[
+            styles.matchBadge,
+            hasAnyPublicData || item.isMatched
+              ? styles.matchedBadge
+              : styles.unmatchedBadge,
+          ]}
+        >
+          <Text
+            style={[
+              styles.matchBadgeText,
+              hasAnyPublicData || item.isMatched
+                ? styles.matchedBadgeText
+                : styles.unmatchedBadgeText,
+            ]}
+          >
+            {hasAnyPublicData
+              ? "공공데이터"
+              : item.isMatched
+              ? "로컬 매칭"
+              : "미매칭"}
+          </Text>
+        </View>
+      </View>
+
+      {item.originalName && item.originalName !== item.standardName ? (
+        <Text style={styles.ingredientAnalysisSub}>
+          OCR 인식명: {item.originalName}
+        </Text>
+      ) : null}
+
+      {item.englishName || firstIngredientInfo?.INGR_ENG_NAME ? (
+        <Text style={styles.ingredientAnalysisSub}>
+          영문명: {item.englishName || firstIngredientInfo?.INGR_ENG_NAME}
+        </Text>
+      ) : null}
+
+      {firstIngredientInfo?.CAS_NO ? (
+        <Text style={styles.publicDataText}>
+          CAS No: {firstIngredientInfo.CAS_NO}
+        </Text>
+      ) : null}
+
+      {item.description || firstIngredientInfo?.ORIGIN_MAJOR_KOR_NAME ? (
+        <Text style={styles.ingredientAnalysisText}>
+          {item.description || firstIngredientInfo?.ORIGIN_MAJOR_KOR_NAME}
+        </Text>
+      ) : null}
+
+      {firstIngredientInfo?.INGR_SYNONYM ? (
+        <View style={styles.publicDataBox}>
+          <Text style={styles.publicDataLabel}>이명</Text>
+          <Text style={styles.publicDataText}>
+            {firstIngredientInfo.INGR_SYNONYM}
+          </Text>
+        </View>
+      ) : null}
+
+      {restrictionLines.length > 0 ? (
+        <View style={styles.publicDataBox}>
+          <Text style={styles.publicDataLabel}>사용 가능 부위</Text>
+          {restrictionLines.map((line, index) => (
+            <Text key={index} style={styles.publicDataText}>
+              • {line}
+            </Text>
+          ))}
+          <Text style={styles.publicDataText}>
+            {restrictionLines.some((line) => line.includes("사용 제한"))
+              ? "공공데이터 기준으로 일부 사용 조건에 제한 정보가 확인되었습니다."
+              : "이 성분은 공공데이터 기준으로 주요 화장품 사용 조건에서 사용할 수 있는 성분입니다."}
+          </Text>
+        </View>
+      ) : null}
+
+      {(item.isRestricted || item.isAllergen) && (
+        <View style={styles.warningBox}>
+          <Ionicons name="warning-outline" size={16} color={AppColors.risk} />
+          <Text style={styles.warningText}>
+            {item.restrictedReason ||
+              item.allergenReason ||
+              "주의가 필요한 성분입니다."}
+          </Text>
+        </View>
+      )}
+
+      {hasAnyPublicData && (
+        <View
+          style={[
+            styles.publicWarningBox,
+            hasPublicDataRestriction
+              ? styles.publicRestrictionBox
+              : styles.publicVerifiedBox,
+          ]}
+        >
+          <Text style={styles.publicWarningTitle}>
+            {hasPublicDataRestriction
+              ? "공공데이터 주의 정보"
+              : "공공데이터 확인"}
+          </Text>
+          <Text style={styles.publicWarningText}>
+            {hasPublicDataRestriction
+              ? userSummary?.simpleSummary ||
+                "공공데이터에서 사용 제한 또는 국가별 규제 정보가 확인된 성분입니다."
+              : "식약처 공공데이터에서 표준 성분 정보가 확인되었습니다."}
+          </Text>
+          {hasPublicDataRestriction && userSummary?.restrictionSummary ? (
+            <>
+              <Text style={styles.publicDataLabel}>제한 정보</Text>
+              <Text style={styles.publicWarningText}>
+                {userSummary.restrictionSummary}
+              </Text>
+            </>
+          ) : null}
+          {hasPublicDataRestriction && userSummary?.countrySummary ? (
+            <>
+              <Text style={styles.publicDataLabel}>국가 정보</Text>
+              <Text style={styles.publicWarningText}>
+                {userSummary.countrySummary}
+              </Text>
+            </>
+          ) : null}
+          {hasPublicDataRestriction ? (
+            <>
+              <Text style={styles.publicDataLabel}>사용자 안내</Text>
+              <Text style={styles.publicWarningText}>
+                {userSummary?.userAdvice ||
+                  "공공데이터는 참고 정보이며, 개인 피부 상태에 따라 반응이 다를 수 있습니다."}
+              </Text>
+            </>
+          ) : null}
+        </View>
+      )}
+
+      {!hasAnyPublicData && !item.isMatched ? (
+        <Text style={styles.noPublicDataText}>
+          공공데이터에서 직접 확인된 정보가 없습니다.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function getBestIngredientInfo(
+  item: MatchedIngredient,
+  ingredientInfo: PublicIngredientInfo[]
+) {
+  if (ingredientInfo.length === 0) return null;
+
+  const targetName = normalizeName(item.standardName || item.originalName);
+
+  const exactMatch = ingredientInfo.find(
+    (info) => normalizeName(info.INGR_KOR_NAME || "") === targetName
+  );
+
+  if (exactMatch) return exactMatch;
+
+  const containsMatch = ingredientInfo.find((info) => {
+    const publicName = normalizeName(info.INGR_KOR_NAME || "");
+
+    return publicName.includes(targetName) || targetName.includes(publicName);
+  });
+
+  return containsMatch || ingredientInfo[0];
+}
+
+function normalizeName(value: string) {
+  return String(value || "")
+    .replace(/\s+/g, "")
+    .replace(/[^\w가-힣]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function getRiskLabel(level: "low" | "medium" | "high") {
@@ -653,18 +1113,21 @@ function getRiskColor(level: "low" | "medium" | "high") {
   switch (level) {
     case "low":
       return {
-        bg: "#DFF4E8",
-        text: "#22A06B",
+        bg: AppColors.mintSoft,
+        text: AppColors.safe,
+        border: "#BDEFE4",
       };
     case "medium":
       return {
-        bg: "#FFF2CC",
-        text: "#C58A00",
+        bg: AppColors.cautionSoft,
+        text: AppColors.caution,
+        border: "#F8DCA0",
       };
     case "high":
       return {
-        bg: "#FBE3E7",
-        text: "#D94C5F",
+        bg: AppColors.riskSoft,
+        text: AppColors.risk,
+        border: "#FFC6CE",
       };
   }
 }
@@ -672,17 +1135,17 @@ function getRiskColor(level: "low" | "medium" | "high") {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
   },
 
   loadingScreen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
   },
 
   permissionScreen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
     padding: 24,
     alignItems: "center",
     justifyContent: "center",
@@ -691,7 +1154,7 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 24,
-    backgroundColor: "#E8EEFF",
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
@@ -699,20 +1162,20 @@ const styles = StyleSheet.create({
   permissionTitle: {
     fontSize: 24,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 10,
   },
   permissionDescription: {
     fontSize: 15,
     lineHeight: 23,
-    color: "#7A808C",
+    color: AppColors.textSub,
     textAlign: "center",
     marginBottom: 24,
   },
   permissionButton: {
     height: 56,
     borderRadius: 18,
-    backgroundColor: "#5B7CFA",
+    backgroundColor: AppColors.primary,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
@@ -720,7 +1183,7 @@ const styles = StyleSheet.create({
   permissionButtonText: {
     fontSize: 16,
     fontWeight: "900",
-    color: "#FFFFFF",
+    color: AppColors.card,
   },
 
   cameraScreen: {
@@ -744,7 +1207,7 @@ const styles = StyleSheet.create({
   cameraTitle: {
     fontSize: 24,
     fontWeight: "900",
-    color: "#FFFFFF",
+    color: AppColors.card,
     marginBottom: 8,
   },
   cameraDescription: {
@@ -766,7 +1229,7 @@ const styles = StyleSheet.create({
   guideText: {
     fontSize: 14,
     fontWeight: "800",
-    color: "#FFFFFF",
+    color: AppColors.card,
     backgroundColor: "rgba(0,0,0,0.35)",
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -780,7 +1243,7 @@ const styles = StyleSheet.create({
     height: 42,
     borderTopWidth: 4,
     borderLeftWidth: 4,
-    borderColor: "#FFFFFF",
+    borderColor: AppColors.card,
     borderTopLeftRadius: 24,
   },
   cornerTopRight: {
@@ -791,7 +1254,7 @@ const styles = StyleSheet.create({
     height: 42,
     borderTopWidth: 4,
     borderRightWidth: 4,
-    borderColor: "#FFFFFF",
+    borderColor: AppColors.card,
     borderTopRightRadius: 24,
   },
   cornerBottomLeft: {
@@ -802,7 +1265,7 @@ const styles = StyleSheet.create({
     height: 42,
     borderBottomWidth: 4,
     borderLeftWidth: 4,
-    borderColor: "#FFFFFF",
+    borderColor: AppColors.card,
     borderBottomLeftRadius: 24,
   },
   cornerBottomRight: {
@@ -813,7 +1276,7 @@ const styles = StyleSheet.create({
     height: 42,
     borderBottomWidth: 4,
     borderRightWidth: 4,
-    borderColor: "#FFFFFF",
+    borderColor: AppColors.card,
     borderBottomRightRadius: 24,
   },
 
@@ -829,7 +1292,7 @@ const styles = StyleSheet.create({
   subControlText: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#FFFFFF",
+    color: AppColors.card,
     marginTop: 6,
   },
   captureButton: {
@@ -837,7 +1300,7 @@ const styles = StyleSheet.create({
     height: 78,
     borderRadius: 39,
     borderWidth: 5,
-    borderColor: "#FFFFFF",
+    borderColor: AppColors.card,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -845,7 +1308,7 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 29,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: AppColors.card,
   },
 
   resultScreen: {
@@ -866,7 +1329,7 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 18,
-    backgroundColor: "#E8EEFF",
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
@@ -877,28 +1340,29 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 6,
   },
   headerDescription: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
 
   previewCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
     padding: 14,
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
     marginBottom: 16,
+    ...SoftShadow,
   },
   previewImage: {
     width: "100%",
     height: 320,
     borderRadius: 18,
-    backgroundColor: "#EEF2F7",
+    backgroundColor: AppColors.subCard,
   },
   previewActions: {
     flexDirection: "row",
@@ -910,7 +1374,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 48,
     borderRadius: 15,
-    backgroundColor: "#EEF3FF",
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -920,13 +1384,13 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 14,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
   },
 
   analyzeButton: {
     height: 58,
     borderRadius: 18,
-    backgroundColor: "#5B7CFA",
+    backgroundColor: AppColors.primary,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -939,11 +1403,11 @@ const styles = StyleSheet.create({
   analyzeButtonText: {
     fontSize: 17,
     fontWeight: "900",
-    color: "#FFFFFF",
+    color: AppColors.card,
   },
 
   loadingCard: {
-    backgroundColor: "#E8EEFF",
+    backgroundColor: AppColors.primarySoft,
     borderRadius: 22,
     padding: 20,
     marginBottom: 16,
@@ -951,7 +1415,7 @@ const styles = StyleSheet.create({
   loadingTitle: {
     fontSize: 17,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 8,
   },
   loadingText: {
@@ -961,11 +1425,12 @@ const styles = StyleSheet.create({
   },
 
   analysisCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
     padding: 20,
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
+    ...SoftShadow,
   },
   resultHeader: {
     flexDirection: "row",
@@ -980,13 +1445,13 @@ const styles = StyleSheet.create({
   resultLabel: {
     fontSize: 13,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
     marginBottom: 6,
   },
   resultProductName: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
   },
   riskBadge: {
     borderRadius: 999,
@@ -999,16 +1464,27 @@ const styles = StyleSheet.create({
   },
 
   riskScoreBox: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
     borderRadius: 18,
     padding: 16,
     marginBottom: 14,
+    borderWidth: 1,
+  },
+  riskScoreTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
   },
   riskScoreLabel: {
     fontSize: 13,
     fontWeight: "800",
-    color: "#8A8F98",
+    color: AppColors.textMuted,
     marginBottom: 8,
+  },
+  riskSummaryLabel: {
+    fontSize: 13,
+    fontWeight: "900",
   },
   riskScore: {
     fontSize: 30,
@@ -1018,7 +1494,7 @@ const styles = StyleSheet.create({
   riskBarBackground: {
     height: 10,
     borderRadius: 999,
-    backgroundColor: "#E5EAF2",
+    backgroundColor: AppColors.border,
     overflow: "hidden",
   },
   riskBarFill: {
@@ -1026,8 +1502,67 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
 
+  conclusionBox: {
+    backgroundColor: AppColors.subCard,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    padding: 18,
+    marginBottom: 14,
+  },
+  conclusionLabel: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: AppColors.text,
+    marginBottom: 8,
+  },
+  conclusionText: {
+    fontSize: 15,
+    color: AppColors.text,
+    lineHeight: 22,
+    marginBottom: 12,
+  },
+
+  confidenceBox: {
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+  },
+  confidenceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 8,
+  },
+  confidenceTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  confidenceTitle: {
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  confidenceLevel: {
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  confidenceText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: "#4B5563",
+  },
+  confidenceCount: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: AppColors.textMuted,
+    marginTop: 8,
+  },
+
   infoBox: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
     borderRadius: 18,
     padding: 16,
     marginBottom: 12,
@@ -1035,8 +1570,20 @@ const styles = StyleSheet.create({
   infoTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 8,
+  },
+  infoTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 8,
+  },
+  sourceLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: AppColors.textMuted,
   },
   infoText: {
     fontSize: 14,
@@ -1045,7 +1592,7 @@ const styles = StyleSheet.create({
   },
 
   ingredientAnalysisItem: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: AppColors.card,
     borderRadius: 14,
     padding: 13,
     marginTop: 10,
@@ -1062,13 +1609,13 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 4,
   },
   ingredientAnalysisSub: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#8A8F98",
+    color: AppColors.textMuted,
     marginBottom: 6,
   },
   ingredientAnalysisText: {
@@ -1085,24 +1632,24 @@ const styles = StyleSheet.create({
     backgroundColor: "#E8F7EF",
   },
   unmatchedBadge: {
-    backgroundColor: "#EEF2F7",
+    backgroundColor: AppColors.subCard,
   },
   matchBadgeText: {
     fontSize: 11,
     fontWeight: "900",
   },
   matchedBadgeText: {
-    color: "#22A06B",
+    color: AppColors.safe,
   },
   unmatchedBadgeText: {
-    color: "#8A8F98",
+    color: AppColors.textMuted,
   },
   warningBox: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 6,
     marginTop: 8,
-    backgroundColor: "#FBE3E7",
+    backgroundColor: AppColors.riskSoft,
     borderRadius: 12,
     padding: 10,
   },
@@ -1111,11 +1658,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: "800",
-    color: "#D94C5F",
+    color: AppColors.risk,
   },
 
   reasonItem: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: AppColors.card,
     borderRadius: 14,
     padding: 13,
     marginTop: 10,
@@ -1125,7 +1672,7 @@ const styles = StyleSheet.create({
   reasonIngredient: {
     fontSize: 14,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
     marginBottom: 5,
   },
   reasonText: {
@@ -1148,12 +1695,235 @@ const styles = StyleSheet.create({
   recommendTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "#22A06B",
+    color: AppColors.safe,
     marginBottom: 7,
+  },
+  recommendTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 7,
+  },
+  recommendSourceLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#6A8F7B",
   },
   recommendText: {
     fontSize: 14,
     lineHeight: 21,
     color: "#4B5563",
   },
+
+  overallCard: {
+    backgroundColor: AppColors.card,
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#EEF1F6",
+  },
+  overallHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  overallLabel: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: AppColors.textMuted,
+    marginBottom: 4,
+  },
+  overallTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: AppColors.text,
+  },
+  overallText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: "#4B5563",
+    marginTop: 12,
+  },
+  overallBadge: {
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: "flex-start",
+  },
+  overallBadgeText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: AppColors.card,
+    borderWidth: 1,
+    borderColor: "#EEF1F6",
+    borderRadius: 16,
+    padding: 16,
+  },
+  summaryTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: AppColors.textMuted,
+    marginBottom: 8,
+  },
+  summaryValue: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: AppColors.text,
+    marginBottom: 2,
+  },
+  summarySubtitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: AppColors.textMuted,
+  },
+  noteText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: AppColors.textMuted,
+    marginTop: 8,
+  },
+  ingredientRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 12,
+  },
+  ingredientRowText: {
+    flex: 1,
+  },
+  ingredientName: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: AppColors.primary,
+  },
+  ingredientSubText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: AppColors.textMuted,
+    marginTop: 4,
+  },
+  statusBadge: {
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  statusBadgeSafe: {
+    backgroundColor: AppColors.mintSoft,
+  },
+  statusBadgeSafeText: {
+    color: AppColors.safe,
+  },
+  statusBadgeWarning: {
+    backgroundColor: AppColors.cautionSoft,
+  },
+  statusBadgeWarningText: {
+    color: AppColors.caution,
+  },
+  statusBadgeNeutral: {
+    backgroundColor: AppColors.subCard,
+  },
+  statusBadgeNeutralText: {
+    color: AppColors.textMuted,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 18,
+  },
+  actionButton: {
+    flex: 1,
+    backgroundColor: AppColors.primary,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  secondaryActionButton: {
+    backgroundColor: AppColors.card,
+    borderWidth: 1,
+    borderColor: AppColors.primary,
+  },
+  actionButtonText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: AppColors.card,
+  },
+  secondaryActionText: {
+    color: AppColors.primary,
+  },
+
+  publicDataBox: {
+    backgroundColor: AppColors.primarySoft,
+    borderRadius: 12,
+    padding: 10,
+    marginTop: 8,
+  },
+  publicDataLabel: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: AppColors.primary,
+    marginBottom: 5,
+  },
+  publicDataText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#6B7280",
+  },
+  publicWarningBox: {
+    borderRadius: 12,
+    padding: 11,
+    marginTop: 8,
+    borderWidth: 1,
+  },
+  publicVerifiedBox: {
+    backgroundColor: AppColors.mintSoft,
+    borderColor: "#BDEFE4",
+  },
+  publicRestrictionBox: {
+    backgroundColor: AppColors.cautionSoft,
+    borderColor: "#F3D58A",
+  },
+  publicWarningTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#C58A00",
+    marginBottom: 6,
+  },
+  publicWarningLevel: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: "900",
+    color: "#8A5A00",
+    marginBottom: 6,
+  },
+  publicWarningText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+    color: "#6B5A2A",
+  },
+  noPublicDataText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: AppColors.textMuted,
+    marginTop: 8,
+  },
 });
+
+

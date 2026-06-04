@@ -6,6 +6,18 @@
     "description": "보습 목적으로 사용되는 성분입니다."
   },
   {
+    "standardName": "정제수",
+    "englishName": "Purified Water",
+    "aliases": ["정제수", "Purified Water", "Aqua"],
+    "description": "화장품의 기본 용매로 사용되는 성분입니다."
+  },
+  {
+    "standardName": "프로판다이올",
+    "englishName": "Propanediol",
+    "aliases": ["프로판다이올", "Propanediol"],
+    "description": "보습 및 용제로 사용되는 성분입니다."
+  },
+  {
     "standardName": "향료",
     "englishName": "Fragrance",
     "aliases": ["향료", "Fragrance", "Perfume"],

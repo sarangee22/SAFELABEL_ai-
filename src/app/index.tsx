@@ -1,5 +1,8 @@
+import { AppColors, Radius, SoftShadow } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -8,24 +11,66 @@ import {
   View,
 } from "react-native";
 
-const recentAnalyses = [
-  {
-    id: 1,
-    name: "오가닉 레어 세럼",
-    date: "2026.05.13",
-    status: "위험",
-    statusType: "danger",
-  },
-  {
-    id: 2,
-    name: "퓨어 선스크린 SPF50",
-    date: "2026.05.10",
-    status: "안전",
-    statusType: "safe",
-  },
-];
+const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";
+
+type RiskLevel = "low" | "medium" | "high";
+
+type RecentAnalysisItem = {
+  id: number;
+  productName: string;
+  date: string;
+  riskLevel: RiskLevel;
+  riskScore: number;
+  summary?: string;
+};
+
+
 
 export default function HomeScreen() {
+  const [recentAnalyses, setRecentAnalyses] = useState<RecentAnalysisItem[]>([]);
+
+
+  const loadRecentAnalyses = async () => {
+    try {
+      const savedHistory = await AsyncStorage.getItem(ANALYSIS_HISTORY_KEY);
+
+      if (!savedHistory) {
+        setRecentAnalyses([]);
+        return;
+      }
+
+      const parsedHistory = JSON.parse(savedHistory);
+
+      if (!Array.isArray(parsedHistory)) {
+        setRecentAnalyses([]);
+        return;
+      }
+
+      const recentItems: RecentAnalysisItem[] = parsedHistory
+        .filter((item) => item?.type === "single")
+        .slice(0, 2)
+        .map((item) => ({
+          id: item.id,
+          productName: item.productName || "이름 없는 제품",
+          date: item.date || new Date().toISOString(),
+          riskLevel: item.riskLevel || "low",
+          riskScore: Number(item.riskScore || 0),
+          summary: item.summary || "",
+        }));
+
+      setRecentAnalyses(recentItems);
+    } catch (error) {
+      console.log("최근 분석 내역 불러오기 실패:", error);
+      setRecentAnalyses([]);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadRecentAnalyses();
+    }, [])
+  );
+
   const goToCamera = () => {
     router.push({
       pathname: "/analyze",
@@ -40,6 +85,13 @@ export default function HomeScreen() {
     });
   };
 
+  const goToHistoryDetail = (id: number) => {
+    router.push({
+      pathname: "/history-detail",
+      params: { id: String(id) },
+    });
+  };
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.header}>
@@ -47,14 +99,19 @@ export default function HomeScreen() {
           <Text style={styles.logoText}>S</Text>
         </View>
 
-        <Text style={styles.appName}>SafeLabel AI</Text>
+        <View>
+          <Text style={styles.appName}>SafeLabel AI</Text>
+          <Text style={styles.appTagline}>화장품 성분 맞춤 분석</Text>
+        </View>
       </View>
 
       <View style={styles.hero}>
-        <Text style={styles.title}>성분표를 찍으면 안전이 보입니다.</Text>
+        <Text style={styles.title}>
+          내 피부에 맞는 화장품인지, 성분부터 확인하세요
+        </Text>
 
         <Text style={styles.subtitle}>
-          AI가 화장품 성분을 분석해 나에게 맞는 안전 선택을 돕습니다.
+          OCR로 성분표를 읽고, 공공데이터와 AI로 맞춤 위험도를 분석합니다.
         </Text>
       </View>
 
@@ -67,21 +124,55 @@ export default function HomeScreen() {
           <View style={styles.scanTextBox}>
             <Text style={styles.scanTitle}>성분표 촬영하기</Text>
             <Text style={styles.scanDescription}>
-              제품 뒷면의 성분표를 촬영해 분석을 시작하세요.
+              제품 뒷면의 전성분 영역을 촬영해 분석을 시작하세요.
             </Text>
           </View>
         </View>
 
         <Pressable style={styles.cameraButton} onPress={goToCamera}>
-          <Ionicons name="camera" size={16} color="#5B7CFA" />
-          <Text style={styles.cameraButtonText}>탭하여 카메라 열기</Text>
+          <Ionicons name="camera" size={18} color="#FFFFFF" />
+          <Text style={styles.cameraButtonText}>카메라로 분석하기</Text>
         </Pressable>
       </View>
 
       <Pressable style={styles.galleryButton} onPress={goToGallery}>
-        <Ionicons name="image-outline" size={22} color="#5B7CFA" />
+        <Ionicons name="image-outline" size={22} color={AppColors.primary} />
         <Text style={styles.galleryButtonText}>갤러리에서 불러오기</Text>
       </Pressable>
+
+      <View style={styles.featureGrid}>
+        <Pressable style={styles.featureCard} onPress={() => router.push("/analyze")}> 
+          <View style={styles.featureIconBox}>
+            <Ionicons name="sparkles-outline" size={22} color={AppColors.primary} />
+          </View>
+          <Text style={styles.featureTitle}>성분 분석하기</Text>
+          <Text style={styles.featureSubtitle}>OCR로 전성분을 읽고 결과를 확인합니다.</Text>
+        </Pressable>
+
+        <Pressable style={styles.featureCard} onPress={() => router.push("/ingredients")}> 
+          <View style={styles.featureIconBox}>
+            <Ionicons name="book-outline" size={22} color={AppColors.primary} />
+          </View>
+          <Text style={styles.featureTitle}>성분사전 검색</Text>
+          <Text style={styles.featureSubtitle}>공공데이터 기반 성분 정보를 찾아보세요.</Text>
+        </Pressable>
+
+        <Pressable style={styles.featureCard} onPress={() => router.push("/history")}> 
+          <View style={styles.featureIconBox}>
+            <Ionicons name="clipboard-outline" size={22} color={AppColors.primary} />
+          </View>
+          <Text style={styles.featureTitle}>최근 분석 기록</Text>
+          <Text style={styles.featureSubtitle}>저장된 분석 결과를 빠르게 확인합니다.</Text>
+        </Pressable>
+
+        <Pressable style={styles.featureCard} onPress={() => router.push("/profile")}> 
+          <View style={styles.featureIconBox}>
+            <Ionicons name="person-outline" size={22} color={AppColors.primary} />
+          </View>
+          <Text style={styles.featureTitle}>맞춤 기준 설정</Text>
+          <Text style={styles.featureSubtitle}>피부 타입과 알레르기 정보를 설정합니다.</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>최근 분석 내역</Text>
@@ -95,60 +186,119 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.historyList}>
-        {recentAnalyses.map((item) => (
-          <Pressable
-            key={item.id}
-            style={styles.historyCard}
-            onPress={() => router.push("/history")}
-          >
-            <View style={styles.productImageBox}>
-              <Text style={styles.productEmoji}>🧴</Text>
-            </View>
+        {recentAnalyses.length > 0 ? (
+          recentAnalyses.map((item) => {
+            const statusInfo = getRiskStatusInfo(item.riskLevel);
 
-            <View style={styles.productInfo}>
-              <Text style={styles.productName}>{item.name}</Text>
-              <Text style={styles.productDate}>{item.date}</Text>
-            </View>
-
-            <View
-              style={[
-                styles.statusBadge,
-                item.statusType === "danger"
-                  ? styles.dangerBadge
-                  : styles.safeBadge,
-              ]}
-            >
-              <View
-                style={[
-                  styles.statusDot,
-                  item.statusType === "danger"
-                    ? styles.dangerDot
-                    : styles.safeDot,
-                ]}
-              />
-
-              <Text
-                style={[
-                  styles.statusText,
-                  item.statusType === "danger"
-                    ? styles.dangerText
-                    : styles.safeText,
-                ]}
+            return (
+              <Pressable
+                key={item.id}
+                style={styles.historyCard}
+                onPress={() => goToHistoryDetail(item.id)}
               >
-                {item.status}
-              </Text>
-            </View>
-          </Pressable>
-        ))}
+                <View style={styles.productImageBox}>
+                  <Text style={styles.productEmoji}>🧴</Text>
+                </View>
+
+                <View style={styles.productInfo}>
+                  <Text style={styles.productName} numberOfLines={1}>
+                    {item.productName}
+                  </Text>
+
+                  <Text style={styles.productDate}>
+                    {formatDate(item.date)} · {item.riskScore}점
+                  </Text>
+
+                  {item.summary ? (
+                    <Text style={styles.productSummary} numberOfLines={1}>
+                      {item.summary}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <View
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: statusInfo.bg },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      { backgroundColor: statusInfo.text },
+                    ]}
+                  />
+
+                  <Text style={[styles.statusText, { color: statusInfo.text }]}>
+                    {statusInfo.label}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })
+        ) : (
+          <View style={styles.emptyHistoryBox}>
+            <Ionicons name="document-text-outline" size={28} color="#A0A7B5" />
+
+            <Text style={styles.emptyHistoryTitle}>아직 분석 내역이 없어요</Text>
+
+            <Text style={styles.emptyHistoryText}>
+              성분표를 촬영하거나 갤러리에서 불러오면 분석 기록이 저장됩니다.
+            </Text>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
 }
 
+function getRiskStatusInfo(level: RiskLevel) {
+  switch (level) {
+    case "low":
+      return {
+        label: "낮음",
+        bg: AppColors.mintSoft,
+        text: AppColors.safe,
+      };
+    case "medium":
+      return {
+        label: "보통",
+        bg: AppColors.cautionSoft,
+        text: AppColors.caution,
+      };
+    case "high":
+      return {
+        label: "높음",
+        bg: AppColors.riskSoft,
+        text: AppColors.risk,
+      };
+    default:
+      return {
+        label: "낮음",
+        bg: AppColors.mintSoft,
+        text: AppColors.safe,
+      };
+  }
+}
+
+function formatDate(dateString: string) {
+  const date = new Date(dateString);
+
+  if (Number.isNaN(date.getTime())) {
+    return "날짜 없음";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}.${month}.${day}`;
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
   },
   container: {
     paddingHorizontal: 24,
@@ -164,21 +314,29 @@ const styles = StyleSheet.create({
   logoBox: {
     width: 42,
     height: 42,
-    borderRadius: 12,
-    backgroundColor: "#E8EEFF",
+    borderRadius: 15,
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 12,
+    borderWidth: 1,
+    borderColor: "#DDE5FF",
   },
   logoText: {
     fontSize: 20,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
   },
   appName: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
+  },
+  appTagline: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: AppColors.textSub,
+    marginTop: 2,
   },
 
   hero: {
@@ -188,21 +346,23 @@ const styles = StyleSheet.create({
     fontSize: 31,
     lineHeight: 40,
     fontWeight: "900",
-    color: "#20222A",
-    letterSpacing: -0.5,
+    color: AppColors.text,
     marginBottom: 12,
   },
   subtitle: {
     fontSize: 15,
     lineHeight: 23,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
 
   scanCard: {
-    backgroundColor: "#E7EEFF",
-    borderRadius: 24,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
     padding: 28,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    ...SoftShadow,
   },
   scanHeader: {
     flexDirection: "row",
@@ -213,7 +373,7 @@ const styles = StyleSheet.create({
     width: 70,
     height: 70,
     borderRadius: 20,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 18,
@@ -225,22 +385,19 @@ const styles = StyleSheet.create({
   scanTitle: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 10,
   },
   scanDescription: {
     fontSize: 16,
     lineHeight: 25,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
 
   cameraButton: {
-    height: 72,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: "#D6DEF2",
-    borderStyle: "dashed",
-    backgroundColor: "#F7FAFF",
+    height: 60,
+    borderRadius: 20,
+    backgroundColor: AppColors.primary,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -248,14 +405,16 @@ const styles = StyleSheet.create({
   },
   cameraButtonText: {
     fontSize: 17,
-    fontWeight: "800",
-    color: "#5B7CFA",
+    fontWeight: "900",
+    color: AppColors.card,
   },
 
   galleryButton: {
     height: 68,
-    borderRadius: 18,
-    backgroundColor: "#E7EEFF",
+    borderRadius: 22,
+    backgroundColor: AppColors.primarySoft,
+    borderWidth: 1,
+    borderColor: "#DDE5FF",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -265,7 +424,119 @@ const styles = StyleSheet.create({
   galleryButtonText: {
     fontSize: 18,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
+  },
+
+  featureGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 26,
+  },
+  featureCard: {
+    width: "48%",
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    padding: 18,
+    ...SoftShadow,
+  },
+  featureIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: AppColors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  featureTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: AppColors.text,
+    marginBottom: 6,
+  },
+  featureSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: AppColors.textSub,
+  },
+
+  profileCriteriaCard: {
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
+    padding: 20,
+    marginBottom: 28,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    ...SoftShadow,
+  },
+  profileCriteriaHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  profileCriteriaIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: AppColors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+  profileCriteriaTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: AppColors.text,
+  },
+  profileCriteriaRows: {
+    gap: 10,
+  },
+  profileCriteriaRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 14,
+  },
+  profileCriteriaLabel: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: AppColors.textSub,
+  },
+  profileCriteriaValue: {
+    flex: 1,
+    textAlign: "right",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "900",
+    color: AppColors.text,
+  },
+  profileEmptyBox: {
+    gap: 14,
+  },
+  profileEmptyText: {
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "800",
+    color: AppColors.textSub,
+  },
+  profileButton: {
+    alignSelf: "flex-start",
+    minHeight: 42,
+    borderRadius: 14,
+    backgroundColor: AppColors.primary,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    gap: 4,
+  },
+  profileButtonText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: AppColors.card,
   },
 
   sectionHeader: {
@@ -277,7 +548,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
   },
   viewAllRow: {
     flexDirection: "row",
@@ -286,7 +557,7 @@ const styles = StyleSheet.create({
   viewAllText: {
     fontSize: 14,
     fontWeight: "700",
-    color: "#8A8F98",
+    color: AppColors.textSub,
   },
 
   historyList: {
@@ -294,21 +565,22 @@ const styles = StyleSheet.create({
   },
   historyCard: {
     minHeight: 92,
-    borderRadius: 18,
-    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    backgroundColor: AppColors.card,
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
     padding: 16,
     flexDirection: "row",
     alignItems: "center",
+    ...SoftShadow,
   },
   productImageBox: {
     width: 66,
     height: 66,
     borderRadius: 14,
-    backgroundColor: "#FAFAFC",
+    backgroundColor: AppColors.subCard,
     borderWidth: 1,
-    borderColor: "#EEF1F6",
+    borderColor: AppColors.border,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 16,
@@ -322,13 +594,19 @@ const styles = StyleSheet.create({
   productName: {
     fontSize: 18,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 9,
   },
   productDate: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#7A808C",
+    color: AppColors.textSub,
+  },
+  productSummary: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: AppColors.textMuted,
+    marginTop: 4,
   },
 
   statusBadge: {
@@ -341,31 +619,36 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingHorizontal: 12,
   },
-  dangerBadge: {
-    backgroundColor: "#FBE3E7",
-  },
-  safeBadge: {
-    backgroundColor: "#DFF4E8",
-  },
   statusDot: {
     width: 7,
     height: 7,
     borderRadius: 4,
   },
-  dangerDot: {
-    backgroundColor: "#E15B6B",
-  },
-  safeDot: {
-    backgroundColor: "#4DB978",
-  },
   statusText: {
     fontSize: 14,
     fontWeight: "900",
   },
-  dangerText: {
-    color: "#D94C5F",
+
+  emptyHistoryBox: {
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    padding: 22,
+    alignItems: "center",
+    ...SoftShadow,
   },
-  safeText: {
-    color: "#3CA66B",
+  emptyHistoryTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: AppColors.text,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  emptyHistoryText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: AppColors.textSub,
+    textAlign: "center",
   },
 });

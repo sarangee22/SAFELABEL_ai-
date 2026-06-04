@@ -24,6 +24,38 @@ export const Colors = {
   },
 } as const;
 
+export const AppColors = {
+  primary: '#5B7CFA',
+  safe: '#34CBAA',
+  caution: '#F6B84B',
+  risk: '#F56B7A',
+  background: '#F7F9FC',
+  card: '#FFFFFF',
+  subCard: '#F2F5FA',
+  border: '#E5EAF2',
+  text: '#1F2533',
+  textSub: '#6F7787',
+  textMuted: '#A2AAB8',
+  primarySoft: '#EDF2FF',
+  mintSoft: '#E8FBF6',
+  cautionSoft: '#FFF6E6',
+  riskSoft: '#FFF0F2',
+} as const;
+
+export const Radius = {
+  card: 24,
+  subCard: 20,
+  chip: 999,
+} as const;
+
+export const SoftShadow = {
+  shadowColor: '#1F2533',
+  shadowOpacity: 0.06,
+  shadowRadius: 14,
+  shadowOffset: { width: 0, height: 8 },
+  elevation: 3,
+} as const;
+
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
 export const Fonts = Platform.select({

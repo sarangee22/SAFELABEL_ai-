@@ -1,28 +1,30 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
+import { AppColors } from "@/constants/theme";
 
 export default function RootLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: "#5B7CFA",
-        tabBarInactiveTintColor: "#8A8F98",
+        tabBarActiveTintColor: AppColors.primary,
+        tabBarInactiveTintColor: AppColors.textMuted,
         tabBarStyle: {
-          height: 72,
-          paddingTop: 8,
-          paddingBottom: 10,
-          backgroundColor: "#FFFFFF",
-          borderTopWidth: 0,
+          height: 78,
+          paddingTop: 9,
+          paddingBottom: 12,
+          backgroundColor: AppColors.card,
+          borderTopWidth: 1,
+          borderTopColor: AppColors.border,
           elevation: 8,
-          shadowColor: "#000",
-          shadowOpacity: 0.08,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: -4 },
+          shadowColor: AppColors.text,
+          shadowOpacity: 0.06,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: -5 },
         },
         tabBarLabelStyle: {
           fontSize: 12,
-          fontWeight: "600",
+          fontWeight: "700",
           marginTop: 2,
         },
       }}
@@ -56,20 +58,6 @@ export default function RootLayout() {
       />
 
       <Tabs.Screen
-        name="compare"
-        options={{
-          title: "비교",
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "git-compare" : "git-compare-outline"}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
         name="history"
         options={{
           title: "기록",
@@ -90,6 +78,20 @@ export default function RootLayout() {
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? "person" : "person-outline"}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="ingredients"
+        options={{
+          title: "성분사전",
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "book" : "book-outline"}
               size={24}
               color={color}
             />

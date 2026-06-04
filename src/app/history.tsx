@@ -1,6 +1,10 @@
+import { AppColors, Radius, SoftShadow } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system";
+import * as Print from "expo-print";
 import { router, useFocusEffect } from "expo-router";
+import * as Sharing from "expo-sharing";
 import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
@@ -15,7 +19,6 @@ import {
 const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";
 
 type RiskLevel = "low" | "medium" | "high";
-type FilterType = "all" | "single" | "compare";
 
 type MatchedIngredient = {
   originalName: string;
@@ -28,6 +31,13 @@ type MatchedIngredient = {
   restrictedReason: string;
   allergenReason: string;
   riskWeight: number;
+  publicData?: {
+    hasPublicData?: boolean;
+    ingredientInfo?: unknown[];
+    restrictedInfo?: unknown[];
+    restrictedNationInfo?: unknown[];
+    regulationInfo?: unknown[];
+  } | null;
 };
 
 type RiskReason = {
@@ -50,32 +60,13 @@ type SingleAnalysis = {
   riskReasons?: RiskReason[];
   summary: string;
   recommendation?: string;
+  aiProvider?: "openai" | "fallback";
+  aiModel?: string | null;
   imageUri?: string;
 };
 
-type CompareAnalysis = {
-  id: number;
-  type: "compare";
-  firstProductName: string;
-  secondProductName: string;
-  recommendedProduct: string;
-  date: string;
-  firstRiskScore: number;
-  secondRiskScore: number;
-  summary: string;
-};
-
-type HistoryItem = SingleAnalysis | CompareAnalysis;
-
-const filters: { label: string; value: FilterType }[] = [
-  { label: "전체", value: "all" },
-  { label: "단일 분석", value: "single" },
-  { label: "비교 분석", value: "compare" },
-];
-
 export default function HistoryScreen() {
-  const [selectedFilter, setSelectedFilter] = useState<FilterType>("all");
-  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyItems, setHistoryItems] = useState<SingleAnalysis[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const showMessage = (title: string, message: string) => {
@@ -87,19 +78,17 @@ export default function HistoryScreen() {
     Alert.alert(title, message);
   };
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     try {
       setIsLoading(true);
 
       const savedHistory = await AsyncStorage.getItem(ANALYSIS_HISTORY_KEY);
-      const parsedHistory: HistoryItem[] = savedHistory
-        ? JSON.parse(savedHistory)
-        : [];
+      const parsedHistory: unknown[] = savedHistory ? JSON.parse(savedHistory) : [];
+      const singleHistory = parsedHistory.filter(isSingleAnalysis);
 
-      setHistoryItems(parsedHistory);
+      setHistoryItems(singleHistory);
     } catch (error) {
       console.log("분석 기록 불러오기 실패:", error);
-
       showMessage(
         "불러오기 실패",
         "분석 기록을 불러오는 중 문제가 발생했습니다."
@@ -107,43 +96,62 @@ export default function HistoryScreen() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       loadHistory();
-    }, [])
+    }, [loadHistory])
   );
 
-  const filteredItems = useMemo(() => {
-    if (selectedFilter === "all") {
-      return historyItems;
+  const highRiskCount = useMemo(
+    () => historyItems.filter((item) => item.riskLevel === "high").length,
+    [historyItems]
+  );
+
+  const handleOpenDetail = (item: SingleAnalysis) => {
+    router.push({
+      pathname: "/history-detail",
+      params: {
+        id: String(item.id),
+      },
+    });
+  };
+
+  const handleSavePdf = async (item: SingleAnalysis) => {
+    try {
+      const html = generateSimpleHtmlForAnalysis(item);
+
+      if (Platform.OS === "web") {
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${item.productName || "analysis"}-${item.id}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showMessage("내보내기 완료", "분석 결과 HTML 파일을 다운로드했습니다.");
+        return;
+      }
+
+      const { uri } = await Print.printToFileAsync({ html });
+
+      // On Android/iOS share or save
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, {
+          mimeType: "application/pdf",
+          dialogTitle: "분석 결과 PDF 공유",
+          UTI: "com.adobe.pdf",
+        });
+      } else {
+        const dest = `${(FileSystem as any).documentDirectory}safelabel-analysis-${item.id}.pdf`;
+        await FileSystem.copyAsync({ from: uri, to: dest });
+        showMessage("저장 완료", `파일을 저장했습니다: ${dest}`);
+      }
+    } catch (error) {
+      console.log("PDF 저장 실패:", error);
+      showMessage("PDF 저장 실패", "PDF 생성 또는 공유 중 오류가 발생했습니다.");
     }
-
-    return historyItems.filter((item) => item.type === selectedFilter);
-  }, [historyItems, selectedFilter]);
-
-  const singleCount = historyItems.filter((item) => item.type === "single")
-    .length;
-
-  const compareCount = historyItems.filter((item) => item.type === "compare")
-    .length;
-
-  const highRiskCount = historyItems.filter(
-    (item) => item.type === "single" && item.riskLevel === "high"
-  ).length;
-
-  const handleOpenDetail = (item: HistoryItem) => {
-  router.push({
-    pathname: "/history-detail",
-    params: {
-      id: String(item.id),
-    },
-  });
-};
-
-  const handleSavePdf = () => {
-    showMessage("PDF 저장", "PDF 저장 기능은 추후 연결 예정입니다.");
   };
 
   const clearHistory = async () => {
@@ -158,8 +166,6 @@ export default function HistoryScreen() {
   };
 
   const handleClearHistory = () => {
-    console.log("전체 삭제 버튼 클릭됨");
-
     if (historyItems.length === 0) {
       showMessage("삭제할 기록 없음", "현재 저장된 분석 기록이 없습니다.");
       return;
@@ -191,26 +197,21 @@ export default function HistoryScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <View style={styles.iconBox}>
-          <Ionicons name="clipboard-outline" size={28} color="#5B7CFA" />
+          <Ionicons name="clipboard-outline" size={28} color={AppColors.primary} />
         </View>
 
         <View style={styles.headerTextBox}>
           <Text style={styles.headerTitle}>분석 기록</Text>
           <Text style={styles.headerDescription}>
-            OCR 단일 분석과 제품 비교 분석 결과를 한눈에 확인합니다.
+            OCR 단일 분석 결과와 공공데이터 매칭 요약을 확인합니다.
           </Text>
         </View>
       </View>
 
       <View style={styles.summaryGrid}>
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryNumber}>{singleCount}</Text>
+          <Text style={styles.summaryNumber}>{historyItems.length}</Text>
           <Text style={styles.summaryLabel}>단일 분석</Text>
-        </View>
-
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryNumber}>{compareCount}</Text>
-          <Text style={styles.summaryLabel}>비교 분석</Text>
         </View>
 
         <View style={styles.summaryCard}>
@@ -219,39 +220,14 @@ export default function HistoryScreen() {
         </View>
       </View>
 
-      <View style={styles.filterRow}>
-        {filters.map((filter) => {
-          const isSelected = selectedFilter === filter.value;
-
-          return (
-            <Pressable
-              key={filter.value}
-              style={[styles.filterChip, isSelected && styles.selectedFilterChip]}
-              onPress={() => setSelectedFilter(filter.value)}
-            >
-              <Text
-                style={[
-                  styles.filterText,
-                  isSelected && styles.selectedFilterText,
-                ]}
-              >
-                {filter.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
       <View style={styles.sectionHeader}>
         <View>
-          <Text style={styles.sectionTitle}>
-            {getSectionTitle(selectedFilter)}
-          </Text>
-          <Text style={styles.sectionCount}>{filteredItems.length}개</Text>
+          <Text style={styles.sectionTitle}>단일 분석 기록</Text>
+          <Text style={styles.sectionCount}>{historyItems.length}개</Text>
         </View>
 
         <Pressable style={styles.clearButton} onPress={handleClearHistory}>
-          <Ionicons name="trash-outline" size={15} color="#D94C5F" />
+          <Ionicons name="trash-outline" size={15} color={AppColors.risk} />
           <Text style={styles.clearButtonText}>전체 삭제</Text>
         </Pressable>
       </View>
@@ -259,36 +235,27 @@ export default function HistoryScreen() {
       <View style={styles.list}>
         {isLoading ? (
           <View style={styles.emptyBox}>
-            <Ionicons name="hourglass-outline" size={34} color="#A0A7B5" />
-            <Text style={styles.emptyTitle}>기록을 불러오는 중이에요</Text>
+            <Ionicons name="hourglass-outline" size={34} color={AppColors.textMuted} />
+            <Text style={styles.emptyTitle}>기록을 불러오는 중입니다</Text>
             <Text style={styles.emptyText}>
               저장된 분석 결과를 확인하고 있습니다.
             </Text>
           </View>
-        ) : filteredItems.length > 0 ? (
-          filteredItems.map((item) =>
-            item.type === "single" ? (
-              <SingleHistoryCard
-                key={`single-${item.id}`}
-                item={item}
-                onOpenDetail={() => handleOpenDetail(item)}
-                onSavePdf={handleSavePdf}
-              />
-            ) : (
-              <CompareHistoryCard
-                key={`compare-${item.id}`}
-                item={item}
-                onOpenDetail={() => handleOpenDetail(item)}
-                onSavePdf={handleSavePdf}
-              />
-            )
-          )
+        ) : historyItems.length > 0 ? (
+          historyItems.map((item) => (
+            <SingleHistoryCard
+              key={`single-${item.id}`}
+              item={item}
+              onOpenDetail={() => handleOpenDetail(item)}
+              onSavePdf={() => handleSavePdf(item)}
+            />
+          ))
         ) : (
           <View style={styles.emptyBox}>
-            <Ionicons name="document-text-outline" size={34} color="#A0A7B5" />
-            <Text style={styles.emptyTitle}>아직 기록이 없어요</Text>
+            <Ionicons name="document-text-outline" size={34} color={AppColors.textMuted} />
+            <Text style={styles.emptyTitle}>아직 기록이 없습니다</Text>
             <Text style={styles.emptyText}>
-              성분 분석이나 제품 비교를 완료하면 이곳에 기록이 표시됩니다.
+              성분표를 촬영하거나 갤러리에서 불러오면 분석 기록이 저장됩니다.
             </Text>
           </View>
         )}
@@ -310,18 +277,19 @@ function SingleHistoryCard({
   const riskLabel = getRiskLabel(item.riskLevel);
   const cautionCount = item.cautionIngredients.length;
   const ingredients = item.mainIngredients || [];
+  const publicMatchedCount = countPublicDataMatched(item.matchedIngredients || []);
 
   return (
     <View style={styles.historyCard}>
       <View style={styles.cardTop}>
         <View style={styles.productImageBox}>
-          <Text style={styles.productEmoji}>🧴</Text>
+          <Ionicons name="scan-outline" size={28} color={AppColors.primary} />
         </View>
 
         <View style={styles.cardMainInfo}>
           <View style={styles.typeRow}>
             <View style={styles.singleTypeBadge}>
-              <Ionicons name="scan-outline" size={13} color="#5B7CFA" />
+              <Ionicons name="scan-outline" size={13} color={AppColors.primary} />
               <Text style={styles.singleTypeText}>단일 분석</Text>
             </View>
             <Text style={styles.dateText}>{formatDate(item.date)}</Text>
@@ -352,10 +320,19 @@ function SingleHistoryCard({
         </View>
 
         <View style={styles.infoBox}>
-          <Text style={styles.infoLabel}>주의 성분</Text>
-          <Text style={styles.infoValue}>{cautionCount}개</Text>
+          <Text style={styles.infoLabel}>공공데이터</Text>
+          <Text style={styles.infoValue}>{publicMatchedCount}개</Text>
         </View>
       </View>
+
+      {cautionCount > 0 ? (
+        <View style={styles.cautionPreviewBox}>
+          <Ionicons name="warning-outline" size={16} color={AppColors.risk} />
+          <Text style={styles.cautionPreviewText} numberOfLines={1}>
+            주의 성분 {cautionCount}개: {item.cautionIngredients.join(", ")}
+          </Text>
+        </View>
+      ) : null}
 
       <View style={styles.ingredientBox}>
         <Text style={styles.ingredientTitle}>주요 성분</Text>
@@ -366,7 +343,7 @@ function SingleHistoryCard({
         </Text>
       </View>
 
-      {item.riskReasons && item.riskReasons.length > 0 && (
+      {item.riskReasons && item.riskReasons.length > 0 ? (
         <View style={styles.reasonPreviewBox}>
           <Text style={styles.ingredientTitle}>위험도 판단 근거</Text>
           <Text style={styles.ingredientText} numberOfLines={2}>
@@ -375,117 +352,9 @@ function SingleHistoryCard({
               .join(" / ")}
           </Text>
         </View>
-      )}
+      ) : null}
 
       <CardActions onOpenDetail={onOpenDetail} onSavePdf={onSavePdf} />
-    </View>
-  );
-}
-
-function CompareHistoryCard({
-  item,
-  onOpenDetail,
-  onSavePdf,
-}: {
-  item: CompareAnalysis;
-  onOpenDetail: () => void;
-  onSavePdf: () => void;
-}) {
-  const firstRisk = getRiskLevelByScore(item.firstRiskScore);
-  const secondRisk = getRiskLevelByScore(item.secondRiskScore);
-
-  return (
-    <View style={styles.historyCard}>
-      <View style={styles.typeRow}>
-        <View style={styles.compareTypeBadge}>
-          <Ionicons name="git-compare-outline" size={13} color="#22A06B" />
-          <Text style={styles.compareTypeText}>비교 분석</Text>
-        </View>
-        <Text style={styles.dateText}>{formatDate(item.date)}</Text>
-      </View>
-
-      <View style={styles.compareTitleRow}>
-        <View style={styles.compareProductBox}>
-          <Text style={styles.compareLabel}>제품 A</Text>
-          <Text style={styles.compareProductName} numberOfLines={2}>
-            {item.firstProductName}
-          </Text>
-        </View>
-
-        <View style={styles.vsCircle}>
-          <Text style={styles.vsText}>VS</Text>
-        </View>
-
-        <View style={styles.compareProductBox}>
-          <Text style={styles.compareLabel}>제품 B</Text>
-          <Text style={styles.compareProductName} numberOfLines={2}>
-            {item.secondProductName}
-          </Text>
-        </View>
-      </View>
-
-      <Text style={styles.summaryText}>{item.summary}</Text>
-
-      <View style={styles.compareRiskBox}>
-        <RiskMiniBar
-          label={item.firstProductName}
-          score={item.firstRiskScore}
-          riskLevel={firstRisk}
-        />
-
-        <RiskMiniBar
-          label={item.secondProductName}
-          score={item.secondRiskScore}
-          riskLevel={secondRisk}
-        />
-      </View>
-
-      <View style={styles.recommendBox}>
-        <Ionicons name="thumbs-up-outline" size={18} color="#22A06B" />
-        <View style={styles.recommendTextBox}>
-          <Text style={styles.recommendLabel}>추천 결과</Text>
-          <Text style={styles.recommendProduct}>{item.recommendedProduct}</Text>
-        </View>
-      </View>
-
-      <CardActions onOpenDetail={onOpenDetail} onSavePdf={onSavePdf} />
-    </View>
-  );
-}
-
-function RiskMiniBar({
-  label,
-  score,
-  riskLevel,
-}: {
-  label: string;
-  score: number;
-  riskLevel: RiskLevel;
-}) {
-  const riskColor = getRiskColor(riskLevel);
-
-  return (
-    <View style={styles.miniRiskItem}>
-      <View style={styles.miniRiskTop}>
-        <Text style={styles.miniRiskLabel} numberOfLines={1}>
-          {label}
-        </Text>
-        <Text style={[styles.miniRiskScore, { color: riskColor.text }]}>
-          {score}점
-        </Text>
-      </View>
-
-      <View style={styles.miniRiskBarBackground}>
-        <View
-          style={[
-            styles.miniRiskBarFill,
-            {
-              width: `${score}%`,
-              backgroundColor: riskColor.text,
-            },
-          ]}
-        />
-      </View>
     </View>
   );
 }
@@ -500,33 +369,24 @@ function CardActions({
   return (
     <View style={styles.actionRow}>
       <Pressable style={styles.detailButton} onPress={onOpenDetail}>
-        <Ionicons name="search-outline" size={17} color="#5B7CFA" />
+        <Ionicons name="search-outline" size={17} color={AppColors.primary} />
         <Text style={styles.detailButtonText}>상세보기</Text>
       </Pressable>
 
       <Pressable style={styles.pdfButton} onPress={onSavePdf}>
-        <Ionicons name="document-text-outline" size={17} color="#5B7CFA" />
+        <Ionicons name="document-text-outline" size={17} color={AppColors.primary} />
         <Text style={styles.pdfButtonText}>PDF 저장</Text>
       </Pressable>
     </View>
   );
 }
 
-function getSectionTitle(filter: FilterType) {
-  switch (filter) {
-    case "single":
-      return "단일 분석 기록";
-    case "compare":
-      return "비교 분석 기록";
-    default:
-      return "전체 분석 기록";
-  }
-}
-
-function getRiskLevelByScore(score: number): RiskLevel {
-  if (score <= 30) return "low";
-  if (score <= 60) return "medium";
-  return "high";
+function isSingleAnalysis(item: unknown): item is SingleAnalysis {
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    (item as { type?: unknown }).type === "single"
+  );
 }
 
 function getRiskLabel(level: RiskLevel) {
@@ -544,20 +404,34 @@ function getRiskColor(level: RiskLevel) {
   switch (level) {
     case "low":
       return {
-        bg: "#DFF4E8",
-        text: "#22A06B",
+        bg: AppColors.mintSoft,
+        text: AppColors.safe,
       };
     case "medium":
       return {
-        bg: "#FFF2CC",
-        text: "#C58A00",
+        bg: AppColors.cautionSoft,
+        text: AppColors.caution,
       };
     case "high":
       return {
-        bg: "#FBE3E7",
-        text: "#D94C5F",
+        bg: AppColors.riskSoft,
+        text: AppColors.risk,
       };
   }
+}
+
+function countPublicDataMatched(ingredients: MatchedIngredient[]) {
+  return ingredients.filter((ingredient) => {
+    const publicData = ingredient.publicData;
+
+    return (
+      publicData?.hasPublicData === true ||
+      (publicData?.ingredientInfo || []).length > 0 ||
+      (publicData?.restrictedInfo || []).length > 0 ||
+      (publicData?.restrictedNationInfo || []).length > 0 ||
+      (publicData?.regulationInfo || []).length > 0
+    );
+  }).length;
 }
 
 function formatDate(dateString: string) {
@@ -577,14 +451,13 @@ function formatDate(dateString: string) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
   },
   container: {
     paddingHorizontal: 24,
     paddingTop: 52,
     paddingBottom: 110,
   },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -594,7 +467,7 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 18,
-    backgroundColor: "#E8EEFF",
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
@@ -605,67 +478,40 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 6,
   },
   headerDescription: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
-
   summaryGrid: {
     flexDirection: "row",
     gap: 10,
-    marginBottom: 18,
+    marginBottom: 24,
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.subCard,
     paddingVertical: 18,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
+    ...SoftShadow,
   },
   summaryNumber: {
     fontSize: 24,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
     marginBottom: 4,
   },
   summaryLabel: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
-
-  filterRow: {
-    flexDirection: "row",
-    backgroundColor: "#EEF2F7",
-    borderRadius: 18,
-    padding: 5,
-    marginBottom: 24,
-  },
-  filterChip: {
-    flex: 1,
-    height: 44,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  selectedFilterChip: {
-    backgroundColor: "#FFFFFF",
-  },
-  filterText: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "#8A8F98",
-  },
-  selectedFilterText: {
-    color: "#5B7CFA",
-  },
-
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -675,19 +521,19 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 22,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
   },
   sectionCount: {
     fontSize: 14,
     fontWeight: "800",
-    color: "#8A8F98",
+    color: AppColors.textMuted,
     marginTop: 3,
   },
   clearButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: "#FBE3E7",
+    backgroundColor: AppColors.riskSoft,
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -695,20 +541,19 @@ const styles = StyleSheet.create({
   clearButtonText: {
     fontSize: 12,
     fontWeight: "900",
-    color: "#D94C5F",
+    color: AppColors.risk,
   },
-
   list: {
     gap: 14,
   },
   historyCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
     padding: 18,
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
+    ...SoftShadow,
   },
-
   cardTop: {
     flexDirection: "row",
     marginBottom: 14,
@@ -717,20 +562,16 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 16,
-    backgroundColor: "#FAFAFC",
+    backgroundColor: AppColors.subCard,
     borderWidth: 1,
-    borderColor: "#EEF1F6",
+    borderColor: AppColors.border,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
   },
-  productEmoji: {
-    fontSize: 26,
-  },
   cardMainInfo: {
     flex: 1,
   },
-
   typeRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -741,7 +582,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#EEF3FF",
+    backgroundColor: AppColors.primarySoft,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
@@ -749,47 +590,31 @@ const styles = StyleSheet.create({
   singleTypeText: {
     fontSize: 12,
     fontWeight: "900",
-    color: "#5B7CFA",
-  },
-  compareTypeBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#E8F7EF",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  compareTypeText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "#22A06B",
+    color: AppColors.primary,
   },
   dateText: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#A0A7B5",
+    color: AppColors.textMuted,
   },
-
   productName: {
     fontSize: 18,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 5,
   },
   brandText: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#8A8F98",
+    color: AppColors.textSub,
   },
   summaryText: {
     fontSize: 14,
     lineHeight: 21,
     fontWeight: "600",
-    color: "#5F6673",
+    color: AppColors.textSub,
     marginBottom: 14,
   },
-
   infoGrid: {
     flexDirection: "row",
     gap: 8,
@@ -797,7 +622,7 @@ const styles = StyleSheet.create({
   },
   infoBox: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.subCard,
     borderRadius: 16,
     padding: 12,
     minHeight: 72,
@@ -806,15 +631,14 @@ const styles = StyleSheet.create({
   infoLabel: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#8A8F98",
+    color: AppColors.textSub,
     marginBottom: 7,
   },
   infoValue: {
     fontSize: 16,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
   },
-
   riskBadge: {
     alignSelf: "flex-start",
     borderRadius: 999,
@@ -825,15 +649,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
   },
-
   ingredientBox: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.subCard,
     borderRadius: 16,
     padding: 14,
     marginBottom: 14,
   },
   reasonPreviewBox: {
-    backgroundColor: "#FFF8E6",
+    backgroundColor: AppColors.cautionSoft,
     borderRadius: 16,
     padding: 14,
     marginBottom: 14,
@@ -841,110 +664,29 @@ const styles = StyleSheet.create({
   ingredientTitle: {
     fontSize: 13,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 7,
   },
   ingredientText: {
     fontSize: 13,
     lineHeight: 20,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
-
-  compareTitleRow: {
+  cautionPreviewBox: {
     flexDirection: "row",
-    alignItems: "stretch",
-    marginBottom: 14,
-  },
-  compareProductBox: {
-    flex: 1,
-    backgroundColor: "#F8FAFC",
-    borderRadius: 16,
-    padding: 14,
-    justifyContent: "center",
-  },
-  compareLabel: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "#5B7CFA",
-    marginBottom: 6,
-  },
-  compareProductName: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: "900",
-    color: "#20222A",
-  },
-  vsCircle: {
-    width: 42,
     alignItems: "center",
-    justifyContent: "center",
-  },
-  vsText: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: "#A0A7B5",
-  },
-
-  compareRiskBox: {
-    backgroundColor: "#F8FAFC",
-    borderRadius: 18,
-    padding: 14,
+    gap: 7,
+    backgroundColor: AppColors.riskSoft,
+    borderRadius: 16,
+    padding: 12,
     marginBottom: 14,
   },
-  miniRiskItem: {
-    marginBottom: 12,
-  },
-  miniRiskTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 7,
-  },
-  miniRiskLabel: {
+  cautionPreviewText: {
     flex: 1,
     fontSize: 13,
     fontWeight: "800",
-    color: "#4B5563",
-    marginRight: 8,
+    color: AppColors.risk,
   },
-  miniRiskScore: {
-    fontSize: 13,
-    fontWeight: "900",
-  },
-  miniRiskBarBackground: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: "#E5EAF2",
-    overflow: "hidden",
-  },
-  miniRiskBarFill: {
-    height: "100%",
-    borderRadius: 999,
-  },
-
-  recommendBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#E8F7EF",
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-  },
-  recommendTextBox: {
-    marginLeft: 10,
-    flex: 1,
-  },
-  recommendLabel: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "#22A06B",
-    marginBottom: 4,
-  },
-  recommendProduct: {
-    fontSize: 15,
-    fontWeight: "900",
-    color: "#20222A",
-  },
-
   actionRow: {
     flexDirection: "row",
     gap: 10,
@@ -953,7 +695,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 48,
     borderRadius: 15,
-    backgroundColor: "#EEF3FF",
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -962,15 +704,15 @@ const styles = StyleSheet.create({
   detailButtonText: {
     fontSize: 14,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
   },
   pdfButton: {
     flex: 1,
     height: 48,
     borderRadius: 15,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: AppColors.card,
     borderWidth: 1,
-    borderColor: "#DCE4FF",
+    borderColor: "#DDE5FF",
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -979,28 +721,72 @@ const styles = StyleSheet.create({
   pdfButtonText: {
     fontSize: 14,
     fontWeight: "900",
-    color: "#5B7CFA",
+    color: AppColors.primary,
   },
-
   emptyBox: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
     padding: 30,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
+    ...SoftShadow,
   },
   emptyTitle: {
     fontSize: 17,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginTop: 12,
     marginBottom: 7,
   },
   emptyText: {
     fontSize: 14,
     lineHeight: 21,
-    color: "#8A8F98",
+    color: AppColors.textSub,
     textAlign: "center",
   },
 });
+
+function generateSimpleHtmlForAnalysis(item: SingleAnalysis) {
+  const safe = (v?: string) => (v ? v : "-");
+  const ingredientsHtml = (item.mainIngredients || [])
+    .map((ing: string) => `<li>${ing}</li>`)
+    .join("");
+
+  return `
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding: 18px; }
+        h1 { font-size: 20px; margin-bottom: 6px; }
+        h2 { font-size: 16px; margin-top: 14px; }
+        p { font-size: 14px; line-height: 1.4; }
+        .meta { color: #666; font-size: 12px; }
+        ul { padding-left: 18px; }
+      </style>
+    </head>
+    <body>
+      <h1>Safelabel 분석 결과</h1>
+      <p class="meta">ID: ${item.id} · 날짜: ${new Date(item.date || Date.now()).toLocaleString()}</p>
+      <h2>제품</h2>
+      <p>${safe(item.productName)}</p>
+
+      <h2>요약</h2>
+      <p>${safe(item.summary)}</p>
+
+      <h2>주요 성분</h2>
+      <ul>${ingredientsHtml}</ul>
+
+      <h2>권장/주의</h2>
+      <p>${safe(item.recommendation)}</p>
+
+      <h2>위험 점수</h2>
+      <p>${typeof item.riskScore !== 'undefined' ? item.riskScore : '-'}</p>
+    </body>
+  </html>
+  `;
+}
+
+

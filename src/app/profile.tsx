@@ -1,6 +1,7 @@
+import { AppColors, Radius, SoftShadow } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -14,18 +15,27 @@ import {
 const PROFILE_STORAGE_KEY = "safelabel_user_profile";
 
 const skinTypes = ["건성", "지성", "복합성", "중성", "수부지"];
+
 const sensitivityTypes = ["민감하지 않음", "약간 민감", "민감", "매우 민감"];
 
 const allergyOptions = [
   "없음",
   "향료",
   "알코올",
+  "에탄올",
+  "변성알코올",
+  "페녹시에탄올",
   "파라벤",
+  "메틸파라벤",
+  "프로필파라벤",
   "색소",
   "에센셜오일",
   "리모넨",
   "리날룰",
   "벤질알코올",
+  "시트랄",
+  "제라니올",
+  "라우릴황산나트륨",
 ];
 
 type UserProfile = {
@@ -44,11 +54,7 @@ export default function ProfileScreen() {
   const [cautionIngredient, setCautionIngredient] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
 
-  useEffect(() => {
-    loadProfile();
-  }, []);
-
-  const loadProfile = async () => {
+  const loadProfile = useCallback(async () => {
     try {
       const savedProfile = await AsyncStorage.getItem(PROFILE_STORAGE_KEY);
 
@@ -77,7 +83,15 @@ export default function ProfileScreen() {
         "저장된 프로필 정보를 불러오는 중 문제가 발생했습니다."
       );
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      loadProfile();
+    }, 0);
+
+    return () => clearTimeout(timeoutId);
+  }, [loadProfile]);
 
   const toggleAllergy = (item: string) => {
     if (item === "없음") {
@@ -119,15 +133,27 @@ export default function ProfileScreen() {
         avoidIngredients,
       };
 
+      // Write and verify to increase reliability across platforms
       await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
 
+      const verify = await AsyncStorage.getItem(PROFILE_STORAGE_KEY);
+
+      if (!verify) {
+        throw new Error("저장 확인 실패: 저장된 데이터가 없습니다.");
+      }
+
+      // Optionally update local UI state immediately
+      setSelectedAllergies(normalizedAllergies);
+
       Alert.alert("프로필 저장", "맞춤 분석 정보가 저장되었습니다.");
+
+      // Do not navigate away after save; remain on profile so user can confirm
     } catch (error) {
       console.error("프로필 저장 실패:", error);
 
       Alert.alert(
         "저장 실패",
-        "맞춤 분석 정보를 저장하는 중 문제가 발생했습니다."
+        "맞춤 분석 정보를 저장하는 중 문제가 발생했습니다. 앱 권한 또는 저장소 상태를 확인하세요."
       );
     }
   };
@@ -170,13 +196,13 @@ export default function ProfileScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <View style={styles.profileIconBox}>
-          <Ionicons name="person-outline" size={30} color="#5B7CFA" />
+          <Ionicons name="person-outline" size={30} color={AppColors.primary} />
         </View>
 
         <View style={styles.headerTextBox}>
-          <Text style={styles.headerTitle}>내 프로필</Text>
+          <Text style={styles.headerTitle}>맞춤 분석 설정</Text>
           <Text style={styles.headerDescription}>
-            피부 정보에 맞춰 화장품 성분을 분석합니다.
+            피부 타입과 피하고 싶은 성분을 바탕으로 분석 기준을 조정합니다.
           </Text>
         </View>
       </View>
@@ -188,7 +214,7 @@ export default function ProfileScreen() {
         <TextInput
           style={styles.input}
           placeholder="예: 선우"
-          placeholderTextColor="#A0A7B5"
+          placeholderTextColor={AppColors.textMuted}
           value={name}
           onChangeText={setName}
         />
@@ -255,7 +281,7 @@ export default function ProfileScreen() {
               </View>
 
               {sensitivity === item && (
-                <Ionicons name="checkmark-circle" size={24} color="#5B7CFA" />
+                <Ionicons name="checkmark-circle" size={24} color={AppColors.primary} />
               )}
             </Pressable>
           ))}
@@ -298,7 +324,7 @@ export default function ProfileScreen() {
         <TextInput
           style={[styles.input, styles.multilineInput]}
           placeholder="예: 페녹시에탄올, 특정 향료 등"
-          placeholderTextColor="#A0A7B5"
+          placeholderTextColor={AppColors.textMuted}
           value={cautionIngredient}
           onChangeText={setCautionIngredient}
           multiline
@@ -338,7 +364,7 @@ export default function ProfileScreen() {
       </View>
 
       <Pressable style={styles.saveButton} onPress={handleSave}>
-        <Ionicons name="save-outline" size={20} color="#FFFFFF" />
+        <Ionicons name="save-outline" size={20} color={AppColors.card} />
         <Text style={styles.saveButtonText}>맞춤 설정 저장하기</Text>
       </Pressable>
 
@@ -367,18 +393,18 @@ function getSensitivityDescription(type: string) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
   },
   loadingScreen: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
     alignItems: "center",
     justifyContent: "center",
   },
   loadingText: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
   container: {
     paddingHorizontal: 24,
@@ -394,8 +420,8 @@ const styles = StyleSheet.create({
   profileIconBox: {
     width: 58,
     height: 58,
-    borderRadius: 18,
-    backgroundColor: "#E8EEFF",
+    borderRadius: 20,
+    backgroundColor: AppColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
@@ -406,32 +432,33 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 26,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 6,
   },
   headerDescription: {
     fontSize: 14,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
 
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    backgroundColor: AppColors.card,
+    borderRadius: Radius.card,
     padding: 20,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#E9EDF3",
+    borderColor: AppColors.border,
+    ...SoftShadow,
   },
   sectionTitle: {
     fontSize: 19,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 8,
   },
   sectionDescription: {
     fontSize: 14,
     lineHeight: 21,
-    color: "#7A808C",
+    color: AppColors.textSub,
     marginBottom: 16,
   },
 
@@ -447,13 +474,13 @@ const styles = StyleSheet.create({
   input: {
     minHeight: 52,
     borderRadius: 14,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: AppColors.background,
     borderWidth: 1,
     borderColor: "#E4E8F0",
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
-    color: "#20222A",
+    color: AppColors.text,
   },
   multilineInput: {
     minHeight: 82,
@@ -461,7 +488,7 @@ const styles = StyleSheet.create({
   },
   helperText: {
     fontSize: 12,
-    color: "#8A8F98",
+    color: AppColors.textMuted,
     marginTop: 8,
   },
 
@@ -476,11 +503,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "#F1F4F9",
     borderWidth: 1,
-    borderColor: "#E5EAF2",
+    borderColor: AppColors.border,
   },
   selectedChip: {
-    backgroundColor: "#5B7CFA",
-    borderColor: "#5B7CFA",
+    backgroundColor: AppColors.primary,
+    borderColor: AppColors.primary,
   },
   optionText: {
     fontSize: 14,
@@ -488,7 +515,7 @@ const styles = StyleSheet.create({
     color: "#69707D",
   },
   selectedChipText: {
-    color: "#FFFFFF",
+    color: AppColors.card,
   },
 
   verticalOptions: {
@@ -498,8 +525,8 @@ const styles = StyleSheet.create({
     minHeight: 72,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#E5EAF2",
-    backgroundColor: "#F8FAFC",
+    borderColor: AppColors.border,
+    backgroundColor: AppColors.background,
     paddingHorizontal: 16,
     paddingVertical: 13,
     flexDirection: "row",
@@ -507,8 +534,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   selectedRowOption: {
-    borderColor: "#5B7CFA",
-    backgroundColor: "#EEF3FF",
+    borderColor: AppColors.primary,
+    backgroundColor: AppColors.primarySoft,
   },
   rowOptionTextBox: {
     flex: 1,
@@ -517,7 +544,7 @@ const styles = StyleSheet.create({
   rowOptionTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 4,
   },
   selectedRowText: {
@@ -525,20 +552,23 @@ const styles = StyleSheet.create({
   },
   rowOptionDescription: {
     fontSize: 13,
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
 
   summaryCard: {
-    backgroundColor: "#E8EEFF",
-    borderRadius: 22,
+    backgroundColor: AppColors.primarySoft,
+    borderRadius: Radius.card,
     padding: 20,
     marginTop: 4,
     marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "#DDE5FF",
+    ...SoftShadow,
   },
   summaryTitle: {
     fontSize: 18,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginBottom: 14,
   },
   summaryRow: {
@@ -556,14 +586,14 @@ const styles = StyleSheet.create({
     textAlign: "right",
     fontSize: 14,
     fontWeight: "900",
-    color: "#20222A",
+    color: AppColors.text,
     marginLeft: 16,
   },
 
   saveButton: {
     height: 58,
     borderRadius: 18,
-    backgroundColor: "#5B7CFA",
+    backgroundColor: AppColors.primary,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
@@ -573,12 +603,12 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 17,
     fontWeight: "900",
-    color: "#FFFFFF",
+    color: AppColors.card,
   },
   resetButton: {
     height: 52,
     borderRadius: 16,
-    backgroundColor: "#EEF2F7",
+    backgroundColor: AppColors.subCard,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
@@ -586,6 +616,9 @@ const styles = StyleSheet.create({
   resetButtonText: {
     fontSize: 15,
     fontWeight: "900",
-    color: "#7A808C",
+    color: AppColors.textSub,
   },
 });
+
+
+
