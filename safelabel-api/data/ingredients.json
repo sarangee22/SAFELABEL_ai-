@@ -1,0 +1,38 @@
+[
+  {
+    "standardName": "글리세린",
+    "englishName": "Glycerin",
+    "aliases": ["글리세린", "글리 세린", "Glycerin"],
+    "description": "보습 목적으로 사용되는 성분입니다."
+  },
+  {
+    "standardName": "향료",
+    "englishName": "Fragrance",
+    "aliases": ["향료", "Fragrance", "Perfume"],
+    "description": "제품에 향을 부여하기 위해 사용되는 성분입니다."
+  },
+  {
+    "standardName": "에탄올",
+    "englishName": "Ethanol",
+    "aliases": ["에탄올", "알코올", "Ethanol", "Alcohol"],
+    "description": "용제나 사용감 개선 목적으로 사용될 수 있는 성분입니다."
+  },
+  {
+    "standardName": "페녹시에탄올",
+    "englishName": "Phenoxyethanol",
+    "aliases": ["페녹시에탄올", "Phenoxyethanol"],
+    "description": "보존 목적으로 사용되는 성분입니다."
+  },
+  {
+    "standardName": "판테놀",
+    "englishName": "Panthenol",
+    "aliases": ["판테놀", "Panthenol"],
+    "description": "피부 진정과 보습 목적으로 사용되는 성분입니다."
+  },
+  {
+    "standardName": "병풀추출물",
+    "englishName": "Centella Asiatica Extract",
+    "aliases": ["병풀추출물", "병풀 추출물", "Centella Asiatica Extract"],
+    "description": "피부 진정 목적으로 사용되는 식물 유래 성분입니다."
+  }
+]

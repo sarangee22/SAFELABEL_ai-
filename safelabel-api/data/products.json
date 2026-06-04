@@ -1,0 +1,23 @@
+[
+  {
+    "productName": "퓨어 시카 크림",
+    "brand": "Safe Sample",
+    "category": "크림",
+    "tags": ["민감피부", "무향료", "알코올프리"],
+    "ingredients": ["정제수", "글리세린", "판테놀", "병풀추출물"]
+  },
+  {
+    "productName": "마일드 수분 세럼",
+    "brand": "Safe Sample",
+    "category": "세럼",
+    "tags": ["건성", "보습", "저자극"],
+    "ingredients": ["정제수", "글리세린", "판테놀"]
+  },
+  {
+    "productName": "클린 선스크린",
+    "brand": "Safe Sample",
+    "category": "선크림",
+    "tags": ["민감피부", "무향료"],
+    "ingredients": ["정제수", "징크옥사이드", "글리세린", "판테놀"]
+  }
+]
