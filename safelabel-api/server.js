@@ -20,6 +20,9 @@ const {
   generateCosmeticAiAnalysis,
 } = require("./services/openAiAnalysisService");
 const { performClovaOCR } = require("./services/clovaOcrService");
+const localIngredients = require("./data/ingredients.json");
+const localRestrictedIngredients = require("./data/restrictedIngredients.json");
+const allergenIngredients = require("./data/allergenIngredients.json");
 const multer = require("multer");
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -52,25 +55,6 @@ function normalizeText(value) {
     .replace(/\s/g, "")
     .replace(/[()［］\[\]{}]/g, "")
     .trim();
-}
-
-function serverNormalize(value) {
-  if (!value) return "";
-  return String(value)
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^0-9a-z가-힣\s]+/gi, " ")
-    .toLowerCase()
-    .trim();
-}
-
-function serverTokensOf(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/[^0-9a-z가-힣\s]+/gi, " ")
-    .split(/\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
 }
 
 function getItemsFromPublicDataResponse(responseData) {
@@ -344,34 +328,55 @@ function searchIngredientCache(keyword) {
   const rawKeyword = String(keyword || "").trim();
   const normalizedKeyword = normalizeText(rawKeyword);
 
-  if (normalizedKeyword.includes("정제수") || rawKeyword.includes("정제수")) {
-    console.log(
-      "DEBUG search text samples for 정제수:",
-      ingredientCache.slice(0, 5).map((item) => ({
-        raw: item,
-        searchText: buildSearchText(item),
-      })),
-    );
-  }
+  return ingredientCache
+    .map((item) => ({
+      item,
+      score: getIngredientMatchScore(item, normalizedKeyword),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(({ item }) => item);
+}
 
-  return ingredientCache.filter((item) => {
-    const searchText = buildSearchText(item);
-    const normalizedText = normalizeText(searchText);
+function getIngredientNames(item) {
+  return [
+    item?.koreanName,
+    item?.standardName,
+    item?.englishName,
+    item?.casNo,
+    ...(Array.isArray(item?.aliases) ? item.aliases : []),
+    ...String(item?.synonyms || "")
+      .split(/,|\/|;|\||\(|\)|\s{2,}/)
+      .filter(Boolean),
+  ]
+    .map(normalizeText)
+    .filter(Boolean);
+}
 
-    return normalizedText.includes(normalizedKeyword);
-  });
+function getIngredientMatchScore(item, normalizedKeyword) {
+  if (!normalizedKeyword) return 0;
+
+  const names = getIngredientNames(item);
+
+  if (names.some((name) => name === normalizedKeyword)) return 100;
+  if (names.some((name) => name.startsWith(normalizedKeyword))) return 80;
+  if (names.some((name) => name.includes(normalizedKeyword))) return 60;
+  if (normalizeText(buildSearchText(item)).includes(normalizedKeyword)) return 20;
+
+  return 0;
 }
 
 function findRestrictedInfo(ingredient) {
   const targetNames = [
     ingredient.koreanName,
+    ingredient.standardName,
     ingredient.englishName,
     ingredient.casNo,
   ]
     .filter(Boolean)
     .map(normalizeText);
 
-  return restrictedCache.find((restricted) => {
+  const publicRestriction = restrictedCache.find((restricted) => {
     const restrictedValues = [
       restricted.koreanName,
       restricted.englishName,
@@ -382,11 +387,27 @@ function findRestrictedInfo(ingredient) {
       .map(normalizeText);
 
     return targetNames.some((target) =>
-      restrictedValues.some(
-        (value) => value && target && value.includes(target),
-      ),
+      restrictedValues.some((value) => value && target && value === target),
     );
   });
+
+  if (publicRestriction) return publicRestriction;
+
+  const localRestriction = localRestrictedIngredients.find((restricted) => {
+    const restrictedName = normalizeText(restricted.standardName);
+
+    return targetNames.some((target) => target === restrictedName);
+  });
+
+  return localRestriction
+    ? {
+        koreanName: localRestriction.standardName,
+        condition: localRestriction.reason,
+        riskWeight: localRestriction.riskWeight,
+        source: "local",
+        raw: localRestriction,
+      }
+    : null;
 }
 
 function splitIngredientsText(text) {
@@ -552,88 +573,119 @@ async function maybeEnhanceSummary(item, currentSummary) {
 }
 
 function findMatchedIngredient(name) {
-  const normalizedName = serverNormalize(name);
+  const normalizedName = normalizeText(name);
 
   if (!normalizedName) return null;
 
-  const inputTokens = serverTokensOf(name);
+  const exactMatch = ingredientCache.find((item) =>
+    getIngredientNames(item).some((candidate) => candidate === normalizedName),
+  );
+
+  if (exactMatch) return exactMatch;
+
+  const containsMatch = ingredientCache
+    .map((item) => ({
+      item,
+      score: getIngredientMatchScore(item, normalizedName),
+    }))
+    .filter(({ score }) => score >= 60)
+    .sort((a, b) => b.score - a.score)[0];
+
+  if (containsMatch) return containsMatch.item;
+
+  const threshold = Math.max(
+    1,
+    Math.floor(Math.min(2, normalizedName.length * 0.2)),
+  );
 
   for (const item of ingredientCache) {
-    const candidates = [
-      item.koreanName,
-      item.englishName,
-      item.synonyms,
-      item.name,
-      item.rawName,
-      item.ingredientName,
-    ]
-      .filter(Boolean)
-      .map((s) => String(s));
-
-    const normCandidates = candidates.map(serverNormalize);
-
-    // exact or contains
-    if (normCandidates.includes(normalizedName)) return item;
-    if (
-      normCandidates.some(
-        (n) => n && (n.includes(normalizedName) || normalizedName.includes(n)),
-      )
-    )
-      return item;
-
-    // token overlap scoring
-    for (const n of normCandidates) {
-      if (!n) continue;
-      const candTokens = serverTokensOf(n);
-      if (candTokens.length === 0 || inputTokens.length === 0) continue;
-      const intersection = candTokens.filter((t) => inputTokens.includes(t));
-      const score =
-        intersection.length / Math.max(candTokens.length, inputTokens.length);
-      if (score >= 0.5 || intersection.length >= 2) return item;
-      if (
-        intersection.length >= 1 &&
-        (candTokens.some((t) => t.length >= 4) ||
-          inputTokens.some((t) => t.length >= 4))
-      )
-        return item;
-    }
-
-    // aliases split and fuzzy check
-    const synonymsRaw = String(item.synonyms || item.aliases || "");
-    const aliases = synonymsRaw
-      .split(/,|\/|;|\||\(|\)|\s{2,}/)
-      .map((s) => serverNormalize(s))
-      .filter(Boolean);
-
-    for (const a of aliases) {
-      if (!a) continue;
-      if (
-        a === normalizedName ||
-        a.includes(normalizedName) ||
-        normalizedName.includes(a)
-      )
-        return item;
-    }
-
-    // fuzzy fallback (small edit distance relative to length)
-    const threshold = Math.max(
-      1,
-      Math.floor(Math.min(3, normalizedName.length * 0.2)),
-    );
-    try {
-      for (const n of normCandidates) {
-        if (!n) continue;
-        if (levenshtein(n, normalizedName) <= threshold) return item;
+    for (const candidate of getIngredientNames(item)) {
+      if (Math.abs(candidate.length - normalizedName.length) > threshold) {
+        continue;
       }
-      for (const a of aliases) {
-        if (levenshtein(a, normalizedName) <= threshold) return item;
+
+      if (levenshtein(candidate, normalizedName) <= threshold) {
+        return item;
       }
-    } catch (e) {
-      // ignore
     }
   }
 
-  return null;
+  const localMatch = localIngredients.find((item) =>
+    getIngredientNames(item).some(
+      (candidate) =>
+        candidate === normalizedName ||
+        candidate.includes(normalizedName) ||
+        normalizedName.includes(candidate),
+    ),
+  );
+
+  return localMatch
+    ? {
+        ...localMatch,
+        koreanName: localMatch.standardName,
+        originDefinition: localMatch.description,
+        synonyms: (localMatch.aliases || []).join(", "),
+        isLocalFallback: true,
+      }
+    : null;
+}
+
+function findAllergenInfo(ingredient) {
+  const names = getIngredientNames(ingredient);
+
+  return allergenIngredients.find((allergen) => {
+    const allergenName = normalizeText(allergen.standardName);
+
+    return names.some((name) => name === allergenName);
+  });
+}
+
+function buildCachedPublicData(ingredient, restrictedInfo) {
+  const isLocalFallback = ingredient.isLocalFallback === true;
+  const ingredientInfo =
+    !isLocalFallback && ingredient.raw
+      ? [ingredient.raw]
+      : !isLocalFallback
+        ? [
+            {
+              INGR_KOR_NAME: ingredient.koreanName,
+              INGR_ENG_NAME: ingredient.englishName,
+              CAS_NO: ingredient.casNo,
+              ORIGIN_MAJOR_KOR_NAME: ingredient.originDefinition,
+              INGR_SYNONYM: ingredient.synonyms,
+            },
+          ]
+        : [];
+  const restrictedInfoItems = restrictedInfo
+    ? [restrictedInfo.raw || restrictedInfo]
+    : [];
+
+  return {
+    ingredientName: ingredient.koreanName || ingredient.standardName || "",
+    ingredientInfo,
+    restrictedInfo: restrictedInfoItems,
+    restrictedNationInfo: [],
+    regulationInfo: [],
+    userSummary: {
+      safetyLevel: restrictedInfo ? "주의 필요" : "기본 정보 확인",
+      englishName: ingredient.englishName || "",
+      casNo: ingredient.casNo || "",
+      definition:
+        ingredient.originDefinition || ingredient.description || "",
+      simpleSummary: restrictedInfo
+        ? "사용 제한 또는 주의 정보가 확인된 성분입니다."
+        : isLocalFallback
+          ? "내부 기준 DB에서 기본 성분 정보가 확인되었습니다."
+          : "식약처 공공데이터에서 원료성분 기본 정보가 확인되었습니다.",
+      restrictionSummary: restrictedInfo?.condition || "",
+      countrySummary: restrictedInfo?.restrictedCountry || "",
+      userAdvice: restrictedInfo
+        ? "제품 유형과 사용 조건을 확인하고 민감 피부라면 소량 테스트를 권장합니다."
+        : "개인 피부 상태에 따라 반응이 다를 수 있으므로 처음 사용할 때는 소량 테스트를 권장합니다.",
+      hasRestriction: Boolean(restrictedInfo),
+    },
+    hasPublicData: !isLocalFallback,
+  };
 }
 
 app.get("/", (req, res) => {
@@ -684,13 +736,82 @@ app.get("/api/ingredients/search", async (req, res) => {
 
     console.log("Ingredient search source count:", ingredientCache.length);
 
-    const results = searchIngredientCache(keyword).slice(0, 30);
+    const normalizedKeyword = normalizeText(keyword);
+    const cachedResults = searchIngredientCache(keyword).slice(0, 30);
+    const hasExactCachedResult = cachedResults.some((item) =>
+      getIngredientNames(item).some((name) => name === normalizedKeyword),
+    );
+    let directResults = [];
 
-    console.log("Ingredient search result count:", results.length);
+    if (!hasExactCachedResult) {
+      const enriched = await enrichIngredientWithPublicData(keyword);
 
-    const mappedResults = await Promise.all(
-      results.map(async (item, index) => {
+      directResults = (enriched.ingredientInfo || []).map((rawItem) => {
+        const item = normalizeIngredientItem(rawItem);
+        const allergenInfo = findAllergenInfo(item);
+
+        return {
+          ...item,
+          summary:
+            enriched.userSummary?.definition ||
+            enriched.userSummary?.simpleSummary ||
+            buildPublicDataSummary(item),
+          hasPublicData: true,
+          isRestricted: Boolean(enriched.userSummary?.hasRestriction),
+          isAllergen: Boolean(allergenInfo),
+          allergenReason: allergenInfo?.reason || "",
+          restrictedInfo: enriched.userSummary?.hasRestriction
+            ? {
+                restrictedReason:
+                  enriched.userSummary.restrictionSummary ||
+                  "사용 조건 또는 제한 정보를 확인해 주세요.",
+              }
+            : null,
+        };
+      });
+
+      if (directResults.length === 0) {
+        directResults = localIngredients
+          .filter((item) =>
+            getIngredientNames(item).some(
+              (name) =>
+                name === normalizedKeyword ||
+                name.includes(normalizedKeyword) ||
+                normalizedKeyword.includes(name),
+            ),
+          )
+          .map((item) => {
+            const restrictedInfo = findRestrictedInfo(item);
+            const allergenInfo = findAllergenInfo(item);
+
+            return {
+              koreanName: item.standardName,
+              englishName: item.englishName || "",
+              casNo: "",
+              synonyms: (item.aliases || []).join(", "),
+              originDefinition: item.description || "",
+              summary:
+                item.description || "내부 기준 DB에서 확인된 성분입니다.",
+              hasPublicData: false,
+              isRestricted: Boolean(restrictedInfo),
+              isAllergen: Boolean(allergenInfo),
+              allergenReason: allergenInfo?.reason || "",
+              restrictedInfo: restrictedInfo
+                ? {
+                    restrictedReason:
+                      restrictedInfo.condition ||
+                      "사용 조건 또는 제한 정보를 확인해 주세요.",
+                  }
+                : null,
+            };
+          });
+      }
+    }
+
+    const mappedCachedResults = await Promise.all(
+      cachedResults.map(async (item, index) => {
         const restrictedInfo = findRestrictedInfo(item);
+        const allergenInfo = findAllergenInfo(item);
         const initialSummary = buildPublicDataSummary(item);
         const summary =
           index < 3
@@ -702,10 +823,36 @@ app.get("/api/ingredients/search", async (req, res) => {
           summary,
           hasPublicData: true,
           isRestricted: Boolean(restrictedInfo),
-          restrictedInfo: restrictedInfo || null,
+          isAllergen: Boolean(allergenInfo),
+          allergenReason: allergenInfo?.reason || "",
+          restrictedInfo: restrictedInfo
+            ? {
+                ...restrictedInfo,
+                restrictedReason:
+                  restrictedInfo.condition ||
+                  "사용 조건 또는 제한 정보를 확인해 주세요.",
+              }
+            : null,
         };
       }),
     );
+    const seenResults = new Set();
+    const mappedResults = [...directResults, ...mappedCachedResults]
+      .filter((item) => {
+        const key = [
+          normalizeText(item.koreanName),
+          normalizeText(item.englishName),
+          normalizeText(item.casNo),
+        ].join("|");
+
+        if (seenResults.has(key)) return false;
+
+        seenResults.add(key);
+        return true;
+      })
+      .slice(0, 30);
+
+    console.log("Ingredient search result count:", mappedResults.length);
 
     res.json({
       keyword,
@@ -820,6 +967,7 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
         avoidIngredients: req.body.avoidIngredients
           ? JSON.parse(req.body.avoidIngredients)
           : [],
+        symptoms: req.body.symptoms ? JSON.parse(req.body.symptoms) : [],
       };
     } catch (e) {
       userProfile = {
@@ -827,6 +975,7 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
         sensitivity: "",
         allergies: [],
         avoidIngredients: [],
+        symptoms: [],
       };
     }
 
@@ -883,6 +1032,7 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
 
       if (matched) {
         const restrictedInfo = findRestrictedInfo(matched);
+        const allergenInfo = findAllergenInfo(matched);
 
         matchedIngredients.push({
           originalName: name,
@@ -894,24 +1044,38 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
           restrictedReason: restrictedInfo
             ? restrictedInfo.condition || ""
             : "",
-          isAllergen: false,
-          allergenReason: "",
-          riskWeight: matched.riskWeight || 0,
-          publicData: null,
+          isAllergen: Boolean(allergenInfo),
+          allergenReason: allergenInfo?.reason || "",
+          restrictedRiskWeight: Number(restrictedInfo?.riskWeight || 20),
+          allergenRiskWeight: Number(allergenInfo?.riskWeight || 0),
+          riskWeight:
+            Number(restrictedInfo?.riskWeight || (restrictedInfo ? 20 : 0)) +
+            Number(allergenInfo?.riskWeight || 0),
+          publicData: buildCachedPublicData(matched, restrictedInfo),
         });
       } else {
         unmatchedIngredients.push(name);
       }
     });
 
-    const cautionIngredients = matchedIngredients
-      .filter((i) => i.isRestricted)
-      .map((i) => i.standardName || i.originalName);
-
     // Calculate personal risk
     const riskResult = calculatePersonalRiskScore(
       matchedIngredients,
       userProfile,
+    );
+    const cautionIngredients = Array.from(
+      new Set([
+        ...matchedIngredients
+          .filter((item) => item.isRestricted || item.isAllergen)
+          .map((item) => item.standardName || item.originalName),
+        ...riskResult.reasons
+          .filter((reason) =>
+            ["user_allergy", "user_avoid", "symptom_match"].includes(
+              reason.type,
+            ),
+          )
+          .map((reason) => reason.ingredient),
+      ]),
     );
 
     // Build simple fallback summary/recommendation

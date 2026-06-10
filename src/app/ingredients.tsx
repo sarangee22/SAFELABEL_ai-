@@ -2,7 +2,7 @@ import { AppColors, Radius, SoftShadow } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -22,6 +22,8 @@ type IngredientSearchResult = {
   hasPublicData: boolean;
   summary: string;
   isRestricted?: boolean;
+  isAllergen?: boolean;
+  allergenReason?: string;
   restrictedInfo?: {
     restrictedReason?: string;
   } | null;
@@ -53,35 +55,6 @@ export default function IngredientsScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const saved = await AsyncStorage.getItem("safelabel_user_profile");
-
-        if (!saved) {
-          setUserProfile(null);
-          return;
-        }
-
-        const parsed = JSON.parse(saved);
-
-        setUserProfile({
-          skinType: parsed.skinType || "",
-          sensitivity: parsed.sensitivity || "",
-          allergies: Array.isArray(parsed.allergies) ? parsed.allergies : [],
-          avoidIngredients: Array.isArray(parsed.avoidIngredients)
-            ? parsed.avoidIngredients
-            : [],
-        });
-      } catch (error) {
-        console.log("성분사전 프로필 로드 실패:", error);
-        setUserProfile(null);
-      }
-    };
-
-    loadProfile();
-  }, []);
-
   useFocusEffect(
     useCallback(() => {
       const reloadProfile = async () => {
@@ -105,42 +78,32 @@ export default function IngredientsScreen() {
           };
 
           setUserProfile(profile);
-
-          if (selectedIngredient) {
-            const updatedFit = buildFitAdvice(selectedIngredient, profile);
-            if (updatedFit !== selectedIngredient.fitAdvice) {
-              setSelectedIngredient({
-                ...selectedIngredient,
-                fitAdvice: updatedFit,
-              });
-            }
-          }
+          setSearchResults((current) =>
+            current.map((item) => ({
+              ...item,
+              fitAdvice: buildFitAdvice(item, profile),
+            })),
+          );
+          setSelectedIngredient((current) =>
+            current
+              ? {
+                  ...current,
+                  fitAdvice: buildFitAdvice(current, profile),
+                }
+              : null,
+          );
         } catch (e) {
           console.log("포커스 시 프로필 로드 실패:", e);
+          setUserProfile(null);
         }
       };
 
       reloadProfile();
-    }, [selectedIngredient])
+    }, []),
   );
 
-  useEffect(() => {
-    if (!selectedIngredient) {
-      return;
-    }
-
-    const updatedFitAdvice = buildFitAdvice(selectedIngredient, userProfile);
-
-    if (updatedFitAdvice !== selectedIngredient.fitAdvice) {
-      setSelectedIngredient({
-        ...selectedIngredient,
-        fitAdvice: updatedFitAdvice,
-      });
-    }
-  }, [selectedIngredient, userProfile]);
-
-  const handleSearch = async () => {
-    const keyword = query.trim();
+  const handleSearch = async (searchTerm?: string) => {
+    const keyword = (searchTerm ?? query).trim();
 
     if (!keyword) {
       setSearchResults([]);
@@ -150,6 +113,7 @@ export default function IngredientsScreen() {
     }
 
     try {
+      setQuery(keyword);
       setIsSearching(true);
       setErrorMessage("");
       setSearchResults([]);
@@ -179,13 +143,15 @@ export default function IngredientsScreen() {
           englishName: resultItem.englishName || "",
           synonyms: resultItem.synonyms || "",
           casNo: resultItem.casNo || "",
-          hasPublicData: true,
+          hasPublicData: resultItem.hasPublicData === true,
           summary:
             resultItem.summary ||
             resultItem.originDefinition ||
             resultItem.synonyms ||
             "공공데이터에서 사용자용 요약을 구성할 정보가 아직 없습니다.",
           isRestricted: Boolean(resultItem.isRestricted),
+          isAllergen: Boolean(resultItem.isAllergen),
+          allergenReason: resultItem.allergenReason || "",
           restrictedInfo: resultItem.restrictedInfo || null,
           fitAdvice: "",
         })
@@ -231,9 +197,12 @@ export default function IngredientsScreen() {
             value={query}
             onChangeText={setQuery}
             returnKeyType="search"
-            onSubmitEditing={handleSearch}
+            onSubmitEditing={() => handleSearch()}
           />
-          <Pressable style={styles.searchButton} onPress={handleSearch}>
+          <Pressable
+            style={styles.searchButton}
+            onPress={() => handleSearch()}
+          >
             {isSearching ? (
               <ActivityIndicator color={AppColors.card} />
             ) : (
@@ -333,13 +302,10 @@ export default function IngredientsScreen() {
                   key={term}
                   style={styles.suggestionButton}
                   onPress={() => {
-                    setQuery(term);
                     setErrorMessage("");
                     setSearchResults([]);
                     setSelectedIngredient(null);
-                    setTimeout(() => {
-                      handleSearch();
-                    }, 0);
+                    handleSearch(term);
                   }}
                 >
                   <Text style={styles.suggestionButtonText}>{term}</Text>
@@ -385,83 +351,11 @@ export default function IngredientsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>도움말</Text>
         <Text style={styles.sectionDescription}>
-          성분명 검색 시 한글/영문/동의어 모두 사용해 보세요. 예: "글리세린", "Glycerin", "향료".
+          성분명 검색 시 한글/영문/동의어 모두 사용해 보세요. 예: 글리세린,
+          Glycerin, 향료.
         </Text>
       </View>
     </ScrollView>
-  );
-}
-
-function IngredientResultCard({ item }: { item: IngredientSearchResult }) {
-  return (
-    <View style={styles.resultCard}>
-      <View style={styles.resultTopRow}>
-        <View style={styles.resultNameBox}>
-          <Text style={styles.ingredientName}>{item.ingredientName}</Text>
-          <Text style={styles.englishName}>
-            {item.englishName || "영문명 정보 없음"}
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.publicBadge,
-            item.hasPublicData ? styles.publicBadgeOn : styles.publicBadgeOff,
-          ]}
-        >
-          <Text
-            style={[
-              styles.publicBadgeText,
-              item.hasPublicData
-                ? styles.publicBadgeTextOn
-                : styles.publicBadgeTextOff,
-            ]}
-          >
-            {item.hasPublicData ? "공공데이터 확인" : "로컬/미확인"}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.metaRow}>
-        <View style={styles.metaBox}>
-          <Text style={styles.metaLabel}>CAS No</Text>
-          <Text style={styles.metaValue}>{item.casNo || "정보 없음"}</Text>
-        </View>
-        <View style={styles.metaBox}>
-          <Text style={styles.metaLabel}>출처</Text>
-          <Text style={styles.metaValue}>
-            {item.hasPublicData ? "공공데이터" : "로컬 예시"}
-          </Text>
-        </View>
-      </View>
-
-      <Text style={styles.summaryLabel}>설명</Text>
-      <Text style={styles.summaryText}>{item.summary}</Text>
-      {item.fitAdvice ? (
-        <View style={styles.fitCard}>
-          <View style={styles.fitHeadingRow}>
-            <Text style={styles.fitLabel}>내 피부 적합도</Text>
-            <View
-              style={[
-                styles.fitBadge,
-                item.isRestricted ? styles.fitBadgeWarning : styles.fitBadgeSafe,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.fitBadgeText,
-                  item.isRestricted
-                    ? styles.fitBadgeTextWarning
-                    : styles.fitBadgeTextSafe,
-                ]}
-              >
-                {item.isRestricted ? "주의" : "적합도 안내"}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.fitText}>{item.fitAdvice}</Text>
-        </View>
-      ) : null}
-    </View>
   );
 }
 
@@ -490,6 +384,13 @@ function buildFitAdvice(
   if (item.isRestricted) {
     reasons.push(
       "공공데이터에서 사용 제한 또는 주의 정보가 확인된 성분입니다. 피부 자극 가능성을 주의하세요."
+    );
+  }
+
+  if (item.isAllergen) {
+    reasons.push(
+      item.allergenReason ||
+        "알레르기 유발 가능 성분으로 분류되어 민감한 사용자는 주의가 필요합니다.",
     );
   }
 

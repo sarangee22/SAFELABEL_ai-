@@ -4,24 +4,28 @@ function calculatePersonalRiskScore(matchedIngredients, userProfile = {}) {
 
   matchedIngredients.forEach((ingredient) => {
     if (ingredient.isRestricted) {
-      score += ingredient.riskWeight || 20;
+      score += ingredient.restrictedRiskWeight || 20;
       reasons.push({
         ingredient: ingredient.standardName,
         type: "restricted",
-        reason: ingredient.restrictedReason,
+        reason:
+          ingredient.restrictedReason ||
+          "사용 조건 또는 제한 정보를 확인해 주세요.",
       });
     }
 
     if (ingredient.isAllergen) {
-      score += ingredient.riskWeight || 20;
+      score += ingredient.allergenRiskWeight || 20;
       reasons.push({
         ingredient: ingredient.standardName,
         type: "allergen",
-        reason: ingredient.allergenReason,
+        reason:
+          ingredient.allergenReason ||
+          "알레르기 유발 가능성이 있어 주의가 필요합니다.",
       });
     }
 
-    if (userProfile.allergies?.includes(ingredient.standardName)) {
+    if (matchesProfileList(ingredient, userProfile.allergies)) {
       score += 35;
       reasons.push({
         ingredient: ingredient.standardName,
@@ -30,33 +34,27 @@ function calculatePersonalRiskScore(matchedIngredients, userProfile = {}) {
       });
     }
 
-    // User-specified avoid ingredients (keywords/categories) should increase risk
-    if (
-      Array.isArray(userProfile.avoidIngredients) &&
-      userProfile.avoidIngredients.length > 0
-    ) {
-      const ingredientText = (
-        (ingredient.standardName || "") +
-        " " +
-        (ingredient.englishName || "")
-      ).toLowerCase();
-
-      const matchedAvoid = userProfile.avoidIngredients.some((avoid) => {
-        try {
-          return avoid && ingredientText.includes(String(avoid).toLowerCase());
-        } catch (e) {
-          return false;
-        }
+    if (matchesProfileList(ingredient, userProfile.avoidIngredients)) {
+      score += 25;
+      reasons.push({
+        ingredient: ingredient.standardName,
+        type: "user_avoid",
+        reason: "사용자가 피하고 싶은 성분과 일치합니다.",
       });
+    }
 
-      if (matchedAvoid) {
-        score += 20;
-        reasons.push({
-          ingredient: ingredient.standardName,
-          type: "user_avoid",
-          reason: "사용자가 회피하도록 설정한 성분/유형과 일치합니다.",
-        });
-      }
+    if (
+      Array.isArray(userProfile.symptoms) &&
+      userProfile.symptoms.length > 0 &&
+      (ingredient.isRestricted || ingredient.isAllergen)
+    ) {
+      score += 5;
+      reasons.push({
+        ingredient: ingredient.standardName,
+        type: "symptom_match",
+        reason:
+          "피부 불편 증상이 설정되어 있어 확인된 주의 성분을 더 보수적으로 평가했습니다.",
+      });
     }
   });
 
@@ -78,38 +76,6 @@ function calculatePersonalRiskScore(matchedIngredients, userProfile = {}) {
     });
   }
 
-  // Consider symptom-driven sensitivity: map common symptoms to vulnerable categories
-  if (Array.isArray(userProfile.symptoms) && userProfile.symptoms.length > 0) {
-    const symptomMap = {
-      "붉어짐(홍조)": ["alcohol", "ethanol", "향료", "fragrance"],
-      가려움: ["fragrance", "paraben", "essential oil"],
-      건조: ["alcohol", "ethanol"],
-      "트러블/여드름": ["coconut", "lauric", "sulfate"],
-      "눈주위 민감": ["essential oil", "fragrance"],
-    };
-
-    matchedIngredients.forEach((ingredient) => {
-      const text = (
-        (ingredient.standardName || "") +
-        " " +
-        (ingredient.englishName || "")
-      ).toLowerCase();
-
-      userProfile.symptoms.forEach((sym) => {
-        const keywords = symptomMap[sym] || [];
-        const matched = keywords.some((k) => text.includes(k));
-        if (matched) {
-          score += 8;
-          reasons.push({
-            ingredient: ingredient.standardName,
-            type: "symptom_match",
-            reason: `사용자 증상(${sym})과 관련된 성분일 수 있습니다.`,
-          });
-        }
-      });
-    });
-  }
-
   const riskScore = Math.min(100, score);
 
   let riskLevel = "low";
@@ -121,6 +87,39 @@ function calculatePersonalRiskScore(matchedIngredients, userProfile = {}) {
     riskLevel,
     reasons,
   };
+}
+
+function normalizeName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[^0-9a-z가-힣]/g, "")
+    .trim();
+}
+
+function matchesProfileList(ingredient, profileItems) {
+  if (!Array.isArray(profileItems) || profileItems.length === 0) {
+    return false;
+  }
+
+  const ingredientNames = [
+    ingredient.originalName,
+    ingredient.standardName,
+    ingredient.englishName,
+  ]
+    .map(normalizeName)
+    .filter(Boolean);
+
+  return profileItems.some((profileItem) => {
+    const target = normalizeName(profileItem);
+
+    if (!target) return false;
+
+    return ingredientNames.some(
+      (name) =>
+        name === target || name.includes(target) || target.includes(name),
+    );
+  });
 }
 
 module.exports = {

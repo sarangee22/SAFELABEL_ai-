@@ -8,15 +8,15 @@ import { router, useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Platform,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 
 const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";

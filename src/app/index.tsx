@@ -6,6 +6,7 @@ import { useCallback, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";
+const PROFILE_STORAGE_KEY = "safelabel_user_profile";
 
 type RiskLevel = "low" | "medium" | "high";
 
@@ -18,10 +19,18 @@ type RecentAnalysisItem = {
   summary?: string;
 };
 
+type UserProfile = {
+  skinType: string;
+  sensitivity: string;
+  allergies: string[];
+  avoidIngredients: string[];
+};
+
 export default function HomeScreen() {
   const [recentAnalyses, setRecentAnalyses] = useState<RecentAnalysisItem[]>(
     [],
   );
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   const loadRecentAnalyses = async () => {
     try {
@@ -41,7 +50,7 @@ export default function HomeScreen() {
 
       const recentItems: RecentAnalysisItem[] = parsedHistory
         .filter((item) => item?.type === "single")
-        .slice(0, 5)
+        .slice(0, 2)
         .map((item) => ({
           id: item.id,
           productName: item.productName || "이름 없는 제품",
@@ -58,9 +67,37 @@ export default function HomeScreen() {
     }
   };
 
+  const loadUserProfile = async () => {
+    try {
+      const savedProfile = await AsyncStorage.getItem(PROFILE_STORAGE_KEY);
+
+      if (!savedProfile) {
+        setUserProfile(null);
+        return;
+      }
+
+      const parsedProfile = JSON.parse(savedProfile);
+
+      setUserProfile({
+        skinType: parsedProfile.skinType || "",
+        sensitivity: parsedProfile.sensitivity || "",
+        allergies: Array.isArray(parsedProfile.allergies)
+          ? parsedProfile.allergies
+          : [],
+        avoidIngredients: Array.isArray(parsedProfile.avoidIngredients)
+          ? parsedProfile.avoidIngredients
+          : [],
+      });
+    } catch (error) {
+      console.log("맞춤 기준 불러오기 실패:", error);
+      setUserProfile(null);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadRecentAnalyses();
+      loadUserProfile();
     }, []),
   );
 
@@ -199,6 +236,76 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.profileCriteriaCard}>
+        <View style={styles.profileCriteriaHeader}>
+          <View style={styles.profileCriteriaIconBox}>
+            <Ionicons
+              name="options-outline"
+              size={22}
+              color={AppColors.primary}
+            />
+          </View>
+          <Text style={styles.profileCriteriaTitle}>내 맞춤 분석 기준</Text>
+        </View>
+
+        {userProfile ? (
+          <View style={styles.profileCriteriaRows}>
+            <ProfileCriteriaRow
+              label="피부 타입"
+              value={userProfile.skinType || "미설정"}
+            />
+            <ProfileCriteriaRow
+              label="민감도"
+              value={userProfile.sensitivity || "미설정"}
+            />
+            <ProfileCriteriaRow
+              label="알레르기"
+              value={
+                userProfile.allergies.length > 0
+                  ? userProfile.allergies.join(", ")
+                  : "미설정"
+              }
+            />
+            <ProfileCriteriaRow
+              label="피하고 싶은 성분"
+              value={
+                userProfile.avoidIngredients.length > 0
+                  ? userProfile.avoidIngredients.join(", ")
+                  : "미설정"
+              }
+            />
+            <Pressable
+              style={styles.profileButton}
+              onPress={() => router.push("/profile")}
+            >
+              <Text style={styles.profileButtonText}>기준 수정하기</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={16}
+                color={AppColors.card}
+              />
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.profileEmptyBox}>
+            <Text style={styles.profileEmptyText}>
+              피부 타입과 알레르기를 설정하면 분석 점수와 주의 안내에 반영됩니다.
+            </Text>
+            <Pressable
+              style={styles.profileButton}
+              onPress={() => router.push("/profile")}
+            >
+              <Text style={styles.profileButtonText}>맞춤 기준 설정하기</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={16}
+                color={AppColors.card}
+              />
+            </Pressable>
+          </View>
+        )}
+      </View>
+
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>최근 분석 내역</Text>
 
@@ -212,53 +319,52 @@ export default function HomeScreen() {
 
       <View style={styles.historyList}>
         {recentAnalyses.length > 0 ? (
-          <>
-            {recentAnalyses.map((item) => {
-              const statusInfo = getRiskStatusInfo(item.riskLevel);
+          recentAnalyses.map((item) => {
+            const statusInfo = getRiskStatusInfo(item.riskLevel);
 
-              return (
-                <Pressable
-                  key={item.id}
-                  style={styles.historyCard}
-                  onPress={() => goToHistoryDetail(item.id)}
-                >
-                  <View style={styles.productImageBox}>
-                    <Text style={styles.productEmoji}>🧴</Text>
-                  </View>
-
-                  <View style={styles.productInfo}>
-                    <Text style={styles.productName} numberOfLines={1}>
-                      {item.productName}
-                    </Text>
-
-                    <Text style={styles.productDate}>
-                      {formatDate(item.date)}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-
-            {Array.from({ length: Math.max(0, 5 - recentAnalyses.length) }).map(
-              (_, index) => (
-                <View
-                  key={`placeholder-${index}`}
-                  style={[styles.historyCard, styles.historyCardPlaceholder]}
-                >
-                  <View style={styles.productImageBox}>
-                    <Text style={styles.productEmoji}>🧴</Text>
-                  </View>
-
-                  <View style={styles.productInfo}>
-                    <View style={styles.placeholderLine} />
-                    <View
-                      style={[styles.placeholderLine, styles.placeholderShort]}
-                    />
-                  </View>
+            return (
+              <Pressable
+                key={item.id}
+                style={styles.historyCard}
+                onPress={() => goToHistoryDetail(item.id)}
+              >
+                <View style={styles.productImageBox}>
+                  <Text style={styles.productEmoji}>🧴</Text>
                 </View>
-              ),
-            )}
-          </>
+
+                <View style={styles.productInfo}>
+                  <Text style={styles.productName} numberOfLines={1}>
+                    {item.productName}
+                  </Text>
+                  <Text style={styles.productDate}>
+                    {formatDate(item.date)} · {item.riskScore}점
+                  </Text>
+                  {item.summary ? (
+                    <Text style={styles.productSummary} numberOfLines={1}>
+                      {item.summary}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <View
+                  style={[
+                    styles.statusBadge,
+                    { backgroundColor: statusInfo.bg },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      { backgroundColor: statusInfo.text },
+                    ]}
+                  />
+                  <Text style={[styles.statusText, { color: statusInfo.text }]}>
+                    {statusInfo.label}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })
         ) : (
           <View style={styles.emptyHistoryBox}>
             <Ionicons name="document-text-outline" size={28} color="#A0A7B5" />
@@ -274,6 +380,21 @@ export default function HomeScreen() {
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function ProfileCriteriaRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.profileCriteriaRow}>
+      <Text style={styles.profileCriteriaLabel}>{label}</Text>
+      <Text style={styles.profileCriteriaValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -652,35 +773,6 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 14,
     fontWeight: "900",
-  },
-
-  historyCardPlaceholder: {
-    backgroundColor: AppColors.subCard,
-    opacity: 0.8,
-  },
-  placeholderLine: {
-    width: "100%",
-    height: 12,
-    borderRadius: 8,
-    backgroundColor: AppColors.border,
-    marginBottom: 10,
-  },
-  placeholderShort: {
-    width: "60%",
-  },
-  statusBadgePlaceholder: {
-    backgroundColor: AppColors.subCard,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-  },
-  statusDotPlaceholder: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: AppColors.textSub,
-  },
-  statusTextPlaceholder: {
-    color: AppColors.textSub,
   },
 
   emptyHistoryBox: {
