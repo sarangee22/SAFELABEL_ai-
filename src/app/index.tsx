@@ -3,13 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";
 
@@ -24,11 +18,10 @@ type RecentAnalysisItem = {
   summary?: string;
 };
 
-
-
 export default function HomeScreen() {
-  const [recentAnalyses, setRecentAnalyses] = useState<RecentAnalysisItem[]>([]);
-
+  const [recentAnalyses, setRecentAnalyses] = useState<RecentAnalysisItem[]>(
+    [],
+  );
 
   const loadRecentAnalyses = async () => {
     try {
@@ -48,7 +41,7 @@ export default function HomeScreen() {
 
       const recentItems: RecentAnalysisItem[] = parsedHistory
         .filter((item) => item?.type === "single")
-        .slice(0, 2)
+        .slice(0, 5)
         .map((item) => ({
           id: item.id,
           productName: item.productName || "이름 없는 제품",
@@ -68,7 +61,7 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       loadRecentAnalyses();
-    }, [])
+    }, []),
   );
 
   const goToCamera = () => {
@@ -141,36 +134,68 @@ export default function HomeScreen() {
       </Pressable>
 
       <View style={styles.featureGrid}>
-        <Pressable style={styles.featureCard} onPress={() => router.push("/analyze")}> 
+        <Pressable
+          style={styles.featureCard}
+          onPress={() => router.push("/analyze")}
+        >
           <View style={styles.featureIconBox}>
-            <Ionicons name="sparkles-outline" size={22} color={AppColors.primary} />
+            <Ionicons
+              name="sparkles-outline"
+              size={22}
+              color={AppColors.primary}
+            />
           </View>
           <Text style={styles.featureTitle}>성분 분석하기</Text>
-          <Text style={styles.featureSubtitle}>OCR로 전성분을 읽고 결과를 확인합니다.</Text>
+          <Text style={styles.featureSubtitle}>
+            OCR로 전성분을 읽고 결과를 확인합니다.
+          </Text>
         </Pressable>
 
-        <Pressable style={styles.featureCard} onPress={() => router.push("/ingredients")}> 
+        <Pressable
+          style={styles.featureCard}
+          onPress={() => router.push("/ingredients")}
+        >
           <View style={styles.featureIconBox}>
             <Ionicons name="book-outline" size={22} color={AppColors.primary} />
           </View>
           <Text style={styles.featureTitle}>성분사전 검색</Text>
-          <Text style={styles.featureSubtitle}>공공데이터 기반 성분 정보를 찾아보세요.</Text>
+          <Text style={styles.featureSubtitle}>
+            공공데이터 기반 성분 정보를 찾아보세요.
+          </Text>
         </Pressable>
 
-        <Pressable style={styles.featureCard} onPress={() => router.push("/history")}> 
+        <Pressable
+          style={styles.featureCard}
+          onPress={() => router.push("/history")}
+        >
           <View style={styles.featureIconBox}>
-            <Ionicons name="clipboard-outline" size={22} color={AppColors.primary} />
+            <Ionicons
+              name="clipboard-outline"
+              size={22}
+              color={AppColors.primary}
+            />
           </View>
           <Text style={styles.featureTitle}>최근 분석 기록</Text>
-          <Text style={styles.featureSubtitle}>저장된 분석 결과를 빠르게 확인합니다.</Text>
+          <Text style={styles.featureSubtitle}>
+            저장된 분석 결과를 빠르게 확인합니다.
+          </Text>
         </Pressable>
 
-        <Pressable style={styles.featureCard} onPress={() => router.push("/profile")}> 
+        <Pressable
+          style={styles.featureCard}
+          onPress={() => router.push("/profile")}
+        >
           <View style={styles.featureIconBox}>
-            <Ionicons name="person-outline" size={22} color={AppColors.primary} />
+            <Ionicons
+              name="person-outline"
+              size={22}
+              color={AppColors.primary}
+            />
           </View>
           <Text style={styles.featureTitle}>맞춤 기준 설정</Text>
-          <Text style={styles.featureSubtitle}>피부 타입과 알레르기 정보를 설정합니다.</Text>
+          <Text style={styles.featureSubtitle}>
+            피부 타입과 알레르기 정보를 설정합니다.
+          </Text>
         </Pressable>
       </View>
 
@@ -187,60 +212,60 @@ export default function HomeScreen() {
 
       <View style={styles.historyList}>
         {recentAnalyses.length > 0 ? (
-          recentAnalyses.map((item) => {
-            const statusInfo = getRiskStatusInfo(item.riskLevel);
+          <>
+            {recentAnalyses.map((item) => {
+              const statusInfo = getRiskStatusInfo(item.riskLevel);
 
-            return (
-              <Pressable
-                key={item.id}
-                style={styles.historyCard}
-                onPress={() => goToHistoryDetail(item.id)}
-              >
-                <View style={styles.productImageBox}>
-                  <Text style={styles.productEmoji}>🧴</Text>
-                </View>
-
-                <View style={styles.productInfo}>
-                  <Text style={styles.productName} numberOfLines={1}>
-                    {item.productName}
-                  </Text>
-
-                  <Text style={styles.productDate}>
-                    {formatDate(item.date)} · {item.riskScore}점
-                  </Text>
-
-                  {item.summary ? (
-                    <Text style={styles.productSummary} numberOfLines={1}>
-                      {item.summary}
-                    </Text>
-                  ) : null}
-                </View>
-
-                <View
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: statusInfo.bg },
-                  ]}
+              return (
+                <Pressable
+                  key={item.id}
+                  style={styles.historyCard}
+                  onPress={() => goToHistoryDetail(item.id)}
                 >
-                  <View
-                    style={[
-                      styles.statusDot,
-                      { backgroundColor: statusInfo.text },
-                    ]}
-                  />
+                  <View style={styles.productImageBox}>
+                    <Text style={styles.productEmoji}>🧴</Text>
+                  </View>
 
-                  <Text style={[styles.statusText, { color: statusInfo.text }]}>
-                    {statusInfo.label}
-                  </Text>
+                  <View style={styles.productInfo}>
+                    <Text style={styles.productName} numberOfLines={1}>
+                      {item.productName}
+                    </Text>
+
+                    <Text style={styles.productDate}>
+                      {formatDate(item.date)}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+
+            {Array.from({ length: Math.max(0, 5 - recentAnalyses.length) }).map(
+              (_, index) => (
+                <View
+                  key={`placeholder-${index}`}
+                  style={[styles.historyCard, styles.historyCardPlaceholder]}
+                >
+                  <View style={styles.productImageBox}>
+                    <Text style={styles.productEmoji}>🧴</Text>
+                  </View>
+
+                  <View style={styles.productInfo}>
+                    <View style={styles.placeholderLine} />
+                    <View
+                      style={[styles.placeholderLine, styles.placeholderShort]}
+                    />
+                  </View>
                 </View>
-              </Pressable>
-            );
-          })
+              ),
+            )}
+          </>
         ) : (
           <View style={styles.emptyHistoryBox}>
             <Ionicons name="document-text-outline" size={28} color="#A0A7B5" />
 
-            <Text style={styles.emptyHistoryTitle}>아직 분석 내역이 없어요</Text>
+            <Text style={styles.emptyHistoryTitle}>
+              아직 분석 내역이 없어요
+            </Text>
 
             <Text style={styles.emptyHistoryText}>
               성분표를 촬영하거나 갤러리에서 불러오면 분석 기록이 저장됩니다.
@@ -627,6 +652,35 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 14,
     fontWeight: "900",
+  },
+
+  historyCardPlaceholder: {
+    backgroundColor: AppColors.subCard,
+    opacity: 0.8,
+  },
+  placeholderLine: {
+    width: "100%",
+    height: 12,
+    borderRadius: 8,
+    backgroundColor: AppColors.border,
+    marginBottom: 10,
+  },
+  placeholderShort: {
+    width: "60%",
+  },
+  statusBadgePlaceholder: {
+    backgroundColor: AppColors.subCard,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+  },
+  statusDotPlaceholder: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: AppColors.textSub,
+  },
+  statusTextPlaceholder: {
+    color: AppColors.textSub,
   },
 
   emptyHistoryBox: {

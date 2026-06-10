@@ -1,8 +1,9 @@
 import { AppColors, Radius, SoftShadow } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -38,12 +39,43 @@ const allergyOptions = [
   "라우릴황산나트륨",
 ];
 
+const avoidOptions = [
+  "향료",
+  "알코올",
+  "파라벤",
+  "색소",
+  "에센셜오일",
+  "리모넨",
+  "페녹시에탄올",
+  "잘 모르겠어요",
+];
+
+const symptomOptions = [
+  "붉어짐(홍조)",
+  "가려움",
+  "건조",
+  "트러블/여드름",
+  "눈주위 민감",
+];
+
+const avoidCategoryMap: Record<string, string[]> = {
+  향료: ["fragrance", "향료"],
+  알코올: ["alcohol", "ethanol", "에탄올", "변성알코올"],
+  파라벤: ["paraben", "파라벤", "메틸파라벤", "프로필파라벤"],
+  색소: ["colorant", "색소"],
+  에센셜오일: ["essential oil", "에센셜오일", "리모넨", "리날룰"],
+  리모넨: ["limonene", "리모넨"],
+  페녹시에탄올: ["phenoxyethanol", "페녹시에탄올"],
+  "잘 모르겠어요": [],
+};
+
 type UserProfile = {
   name: string;
   skinType: string;
   sensitivity: string;
   allergies: string[];
   avoidIngredients: string[];
+  symptoms?: string[];
 };
 
 export default function ProfileScreen() {
@@ -51,8 +83,17 @@ export default function ProfileScreen() {
   const [skinType, setSkinType] = useState("건성");
   const [sensitivity, setSensitivity] = useState("약간 민감");
   const [selectedAllergies, setSelectedAllergies] = useState<string[]>([]);
-  const [cautionIngredient, setCautionIngredient] = useState("");
   const [isLoaded, setIsLoaded] = useState(false);
+  const [selectedAvoidItems, setSelectedAvoidItems] = useState<string[]>([]);
+  const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -70,8 +111,8 @@ export default function ProfileScreen() {
       setSensitivity(parsedProfile.sensitivity || "약간 민감");
       setSelectedAllergies(parsedProfile.allergies || []);
 
-      const avoidText = (parsedProfile.avoidIngredients || []).join(", ");
-      setCautionIngredient(avoidText);
+      setSelectedAvoidItems(parsedProfile.avoidIngredients || []);
+      setSelectedSymptoms(parsedProfile.symptoms || []);
 
       setIsLoaded(true);
     } catch (error) {
@@ -80,7 +121,7 @@ export default function ProfileScreen() {
 
       Alert.alert(
         "불러오기 실패",
-        "저장된 프로필 정보를 불러오는 중 문제가 발생했습니다."
+        "저장된 프로필 정보를 불러오는 중 문제가 발생했습니다.",
       );
     }
   }, []);
@@ -92,6 +133,17 @@ export default function ProfileScreen() {
 
     return () => clearTimeout(timeoutId);
   }, [loadProfile]);
+
+  const showToast = (
+    message: string,
+    type: "success" | "error" = "success",
+  ) => {
+    setToast({ message, type });
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null);
+    }, 3000); // 3초 후 토스트 메시지 숨김
+  };
 
   const toggleAllergy = (item: string) => {
     if (item === "없음") {
@@ -110,27 +162,58 @@ export default function ProfileScreen() {
     });
   };
 
-  const parseAvoidIngredients = (text: string) => {
-    return text
-      .split(/[,，ㆍ·\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+  const toggleAvoidOption = (item: string) => {
+    if (item === "잘 모르겠어요") {
+      setSelectedAvoidItems(["잘 모르겠어요"]);
+      return;
+    }
+
+    setSelectedAvoidItems((prev) => {
+      const withoutUnknown = prev.filter((value) => value !== "잘 모르겠어요");
+
+      if (withoutUnknown.includes(item)) {
+        return withoutUnknown.filter((value) => value !== item);
+      }
+
+      return [...withoutUnknown, item];
+    });
+  };
+
+  const toggleSymptom = (item: string) => {
+    setSelectedSymptoms((prev) => {
+      if (prev.includes(item)) return prev.filter((v) => v !== item);
+      return [...prev, item];
+    });
   };
 
   const handleSave = async () => {
+    if (isSaving) return; // 중복 클릭 방지
+    setIsSaving(true);
+
     try {
       const normalizedAllergies = selectedAllergies.includes("없음")
         ? []
         : selectedAllergies;
+      const normalizedAvoids = selectedAvoidItems.includes("잘 모르겠어요")
+        ? ["잘 모르겠어요"]
+        : // expand categories to representative ingredient keywords
+          Array.from(
+            new Set(
+              selectedAvoidItems.flatMap(
+                (cat) => avoidCategoryMap[cat] || [cat],
+              ),
+            ),
+          );
 
-      const avoidIngredients = parseAvoidIngredients(cautionIngredient);
+      const normalizedSymptoms = selectedSymptoms;
 
       const profile: UserProfile = {
         name: name.trim(),
         skinType,
         sensitivity,
         allergies: normalizedAllergies,
-        avoidIngredients,
+        avoidIngredients: normalizedAvoids,
+        symptoms: normalizedSymptoms,
       };
 
       // Write and verify to increase reliability across platforms
@@ -144,21 +227,22 @@ export default function ProfileScreen() {
 
       // Optionally update local UI state immediately
       setSelectedAllergies(normalizedAllergies);
+      setSelectedAvoidItems(selectedAvoidItems);
+      setSelectedSymptoms(selectedSymptoms);
 
-      Alert.alert("프로필 저장", "맞춤 분석 정보가 저장되었습니다.");
-
-      // Do not navigate away after save; remain on profile so user can confirm
+      showToast("맞춤 설정이 저장되었습니다.", "success");
     } catch (error) {
       console.error("프로필 저장 실패:", error);
-
-      Alert.alert(
-        "저장 실패",
-        "맞춤 분석 정보를 저장하는 중 문제가 발생했습니다. 앱 권한 또는 저장소 상태를 확인하세요."
-      );
+      showToast("설정 저장에 실패했습니다. 다시 시도해주세요.", "error");
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleReset = async () => {
+    if (isResetting) return; // 중복 클릭 방지
+    setIsResetting(true);
+
     try {
       await AsyncStorage.removeItem(PROFILE_STORAGE_KEY);
 
@@ -166,23 +250,22 @@ export default function ProfileScreen() {
       setSkinType("건성");
       setSensitivity("약간 민감");
       setSelectedAllergies([]);
-      setCautionIngredient("");
+      setSelectedAvoidItems([]);
+      setSelectedSymptoms([]);
 
-      Alert.alert("초기화 완료", "저장된 맞춤 설정이 초기화되었습니다.");
+      showToast("설정이 초기화되었습니다.", "success");
     } catch (error) {
       console.error("프로필 초기화 실패:", error);
-
-      Alert.alert(
-        "초기화 실패",
-        "맞춤 설정을 초기화하는 중 문제가 발생했습니다."
-      );
+      showToast("설정 초기화에 실패했습니다. 다시 시도해주세요.", "error");
+    } finally {
+      setIsResetting(false);
     }
   };
 
   const selectedAllergyText =
     selectedAllergies.length > 0 ? selectedAllergies.join(", ") : "미선택";
-
-  const avoidIngredientList = parseAvoidIngredients(cautionIngredient);
+  const selectedAvoidText =
+    selectedAvoidItems.length > 0 ? selectedAvoidItems.join(", ") : "미선택";
 
   if (!isLoaded) {
     return (
@@ -193,185 +276,296 @@ export default function ProfileScreen() {
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.profileIconBox}>
-          <Ionicons name="person-outline" size={30} color={AppColors.primary} />
+    <View style={styles.screen}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.container}
+      >
+        <View style={styles.header}>
+          <View style={styles.profileIconBox}>
+            <Ionicons
+              name="person-outline"
+              size={30}
+              color={AppColors.primary}
+            />
+          </View>
+
+          <View style={styles.headerTextBox}>
+            <Text style={styles.headerTitle}>맞춤 분석 설정</Text>
+            <Text style={styles.headerDescription}>
+              피부 타입과 피하고 싶은 성분을 바탕으로 분석 기준을 조정합니다.
+            </Text>
+          </View>
         </View>
 
-        <View style={styles.headerTextBox}>
-          <Text style={styles.headerTitle}>맞춤 분석 설정</Text>
-          <Text style={styles.headerDescription}>
-            피부 타입과 피하고 싶은 성분을 바탕으로 분석 기준을 조정합니다.
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>기본 정보</Text>
+
+          <Text style={styles.label}>이름 또는 닉네임</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="예: 선우"
+            placeholderTextColor={AppColors.textMuted}
+            value={name}
+            onChangeText={setName}
+          />
+        </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>피부 타입</Text>
+          <Text style={styles.sectionDescription}>
+            현재 피부 상태에 가장 가까운 타입을 선택하세요.
           </Text>
-        </View>
-      </View>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>기본 정보</Text>
-
-        <Text style={styles.label}>이름 또는 닉네임</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="예: 선우"
-          placeholderTextColor={AppColors.textMuted}
-          value={name}
-          onChangeText={setName}
-        />
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>피부 타입</Text>
-        <Text style={styles.sectionDescription}>
-          현재 피부 상태에 가장 가까운 타입을 선택하세요.
-        </Text>
-
-        <View style={styles.optionGrid}>
-          {skinTypes.map((item) => (
-            <Pressable
-              key={item}
-              style={[
-                styles.optionChip,
-                skinType === item && styles.selectedChip,
-              ]}
-              onPress={() => setSkinType(item)}
-            >
-              <Text
-                style={[
-                  styles.optionText,
-                  skinType === item && styles.selectedChipText,
-                ]}
-              >
-                {item}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>민감 피부 정도</Text>
-        <Text style={styles.sectionDescription}>
-          성분 분석 시 자극 가능성 판단에 반영됩니다.
-        </Text>
-
-        <View style={styles.verticalOptions}>
-          {sensitivityTypes.map((item) => (
-            <Pressable
-              key={item}
-              style={[
-                styles.rowOption,
-                sensitivity === item && styles.selectedRowOption,
-              ]}
-              onPress={() => setSensitivity(item)}
-            >
-              <View style={styles.rowOptionTextBox}>
-                <Text
-                  style={[
-                    styles.rowOptionTitle,
-                    sensitivity === item && styles.selectedRowText,
-                  ]}
-                >
-                  {item}
-                </Text>
-
-                <Text style={styles.rowOptionDescription}>
-                  {getSensitivityDescription(item)}
-                </Text>
-              </View>
-
-              {sensitivity === item && (
-                <Ionicons name="checkmark-circle" size={24} color={AppColors.primary} />
-              )}
-            </Pressable>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>알레르기 / 주의 성분</Text>
-        <Text style={styles.sectionDescription}>
-          선택한 성분은 분석 결과에서 더 강하게 표시됩니다.
-        </Text>
-
-        <View style={styles.optionGrid}>
-          {allergyOptions.map((item) => {
-            const isSelected = selectedAllergies.includes(item);
-
-            return (
+          <View style={styles.optionGrid}>
+            {skinTypes.map((item) => (
               <Pressable
                 key={item}
-                style={[styles.optionChip, isSelected && styles.selectedChip]}
-                onPress={() => toggleAllergy(item)}
+                style={[
+                  styles.optionChip,
+                  skinType === item && styles.selectedChip,
+                ]}
+                onPress={() => setSkinType(item)}
               >
                 <Text
                   style={[
                     styles.optionText,
-                    isSelected && styles.selectedChipText,
+                    skinType === item && styles.selectedChipText,
                   ]}
                 >
                   {item}
                 </Text>
               </Pressable>
-            );
-          })}
+            ))}
+          </View>
         </View>
 
-        <Text style={[styles.label, styles.extraLabel]}>
-          직접 입력한 회피 성분
-        </Text>
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>민감 피부 정도</Text>
+          <Text style={styles.sectionDescription}>
+            성분 분석 시 자극 가능성 판단에 반영됩니다.
+          </Text>
 
-        <TextInput
-          style={[styles.input, styles.multilineInput]}
-          placeholder="예: 페녹시에탄올, 특정 향료 등"
-          placeholderTextColor={AppColors.textMuted}
-          value={cautionIngredient}
-          onChangeText={setCautionIngredient}
-          multiline
-        />
+          <View style={styles.verticalOptions}>
+            {sensitivityTypes.map((item) => (
+              <Pressable
+                key={item}
+                style={[
+                  styles.rowOption,
+                  sensitivity === item && styles.selectedRowOption,
+                ]}
+                onPress={() => setSensitivity(item)}
+              >
+                <View style={styles.rowOptionTextBox}>
+                  <Text
+                    style={[
+                      styles.rowOptionTitle,
+                      sensitivity === item && styles.selectedRowText,
+                    ]}
+                  >
+                    {item}
+                  </Text>
 
-        <Text style={styles.helperText}>
-          여러 개 입력할 때는 쉼표로 구분하세요.
-        </Text>
-      </View>
+                  <Text style={styles.rowOptionDescription}>
+                    {getSensitivityDescription(item)}
+                  </Text>
+                </View>
 
-      <View style={styles.summaryCard}>
-        <Text style={styles.summaryTitle}>맞춤 분석 기준</Text>
-
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>피부 타입</Text>
-          <Text style={styles.summaryValue}>{skinType}</Text>
+                {sensitivity === item && (
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={24}
+                    color={AppColors.primary}
+                  />
+                )}
+              </Pressable>
+            ))}
+          </View>
         </View>
 
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>민감도</Text>
-          <Text style={styles.summaryValue}>{sensitivity}</Text>
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>피부 증상 (선택)</Text>
+          <Text style={styles.sectionDescription}>
+            평소 자주 경험하는 피부 반응을 선택하세요. (선택사항)
+          </Text>
+
+          <View style={styles.optionGrid}>
+            {symptomOptions.map((item) => {
+              const isSelected = selectedSymptoms.includes(item);
+
+              return (
+                <Pressable
+                  key={item}
+                  style={[styles.optionChip, isSelected && styles.selectedChip]}
+                  onPress={() => toggleSymptom(item)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      isSelected && styles.selectedChipText,
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>알레르기</Text>
-          <Text style={styles.summaryValue}>{selectedAllergyText}</Text>
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>알레르기 / 주의 성분</Text>
+          <Text style={styles.sectionDescription}>
+            선택한 성분은 분석 결과에서 더 강하게 표시됩니다.
+          </Text>
+
+          <View style={styles.optionGrid}>
+            {allergyOptions.map((item) => {
+              const isSelected = selectedAllergies.includes(item);
+
+              return (
+                <Pressable
+                  key={item}
+                  style={[styles.optionChip, isSelected && styles.selectedChip]}
+                  onPress={() => toggleAllergy(item)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      isSelected && styles.selectedChipText,
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.label, styles.extraLabel]}>
+            지금 피하고 싶은 성분 유형
+          </Text>
+
+          <Text style={styles.sectionDescription}>
+            모르는 경우에도 가장 가까운 항목을 선택하거나 “잘 모르겠어요”를
+            선택하세요.
+          </Text>
+
+          <View style={styles.optionGrid}>
+            {avoidOptions.map((item) => {
+              const isSelected = selectedAvoidItems.includes(item);
+
+              return (
+                <Pressable
+                  key={item}
+                  style={[styles.optionChip, isSelected && styles.selectedChip]}
+                  onPress={() => toggleAvoidOption(item)}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      isSelected && styles.selectedChipText,
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>회피 성분</Text>
-          <Text style={styles.summaryValue}>
-            {avoidIngredientList.length > 0
-              ? avoidIngredientList.join(", ")
-              : "미입력"}
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>맞춤 분석 기준</Text>
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>피부 타입</Text>
+            <Text style={styles.summaryValue}>{skinType}</Text>
+          </View>
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>민감도</Text>
+            <Text style={styles.summaryValue}>{sensitivity}</Text>
+          </View>
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>증상(선택)</Text>
+            <Text style={styles.summaryValue}>
+              {selectedSymptoms.length > 0
+                ? selectedSymptoms.join(", ")
+                : "미선택"}
+            </Text>
+          </View>
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>알레르기</Text>
+            <Text style={styles.summaryValue}>{selectedAllergyText}</Text>
+          </View>
+
+          <View style={styles.summaryRow}>
+            <Text style={styles.summaryLabel}>회피 성분</Text>
+            <Text style={styles.summaryValue}>{selectedAvoidText}</Text>
+          </View>
+        </View>
+
+        <Pressable
+          style={[styles.saveButton, isSaving && styles.disabledButton]}
+          onPress={handleSave}
+          disabled={isSaving}
+        >
+          {isSaving ? (
+            <ActivityIndicator color={AppColors.card} size="small" />
+          ) : (
+            <Ionicons name="save-outline" size={20} color={AppColors.card} />
+          )}
+          <Text style={styles.saveButtonText}>
+            {isSaving ? "저장 중..." : "맞춤 설정 저장하기"}
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.resetButton, isResetting && styles.disabledButton]}
+          onPress={handleReset}
+          disabled={isResetting}
+        >
+          {isResetting && (
+            <ActivityIndicator
+              color={AppColors.textSub}
+              size="small"
+              style={{ marginRight: 8 }}
+            />
+          )}
+          <Text style={styles.resetButtonText}>
+            {isResetting ? "초기화 중..." : "설정 초기화"}
+          </Text>
+        </Pressable>
+      </ScrollView>
+
+      {toast && (
+        <View
+          style={[
+            styles.toastContainer,
+            toast.type === "error" ? styles.toastError : styles.toastSuccess,
+          ]}
+        >
+          <Ionicons
+            name={toast.type === "error" ? "alert-circle" : "checkmark-circle"}
+            size={22}
+            color={toast.type === "error" ? AppColors.risk : AppColors.safe}
+          />
+          <Text
+            style={[
+              styles.toastText,
+              toast.type === "error"
+                ? styles.toastTextError
+                : styles.toastTextSuccess,
+            ]}
+          >
+            {toast.message}
           </Text>
         </View>
-      </View>
-
-      <Pressable style={styles.saveButton} onPress={handleSave}>
-        <Ionicons name="save-outline" size={20} color={AppColors.card} />
-        <Text style={styles.saveButtonText}>맞춤 설정 저장하기</Text>
-      </Pressable>
-
-      <Pressable style={styles.resetButton} onPress={handleReset}>
-        <Text style={styles.resetButtonText}>설정 초기화</Text>
-      </Pressable>
-    </ScrollView>
+      )}
+    </View>
   );
 }
 
@@ -394,6 +588,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: AppColors.background,
+  },
+  scrollView: {
+    flex: 1,
   },
   loadingScreen: {
     flex: 1,
@@ -600,6 +797,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
+  disabledButton: {
+    opacity: 0.7,
+  },
   saveButtonText: {
     fontSize: 17,
     fontWeight: "900",
@@ -612,13 +812,45 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
+    flexDirection: "row",
   },
   resetButtonText: {
     fontSize: 15,
     fontWeight: "900",
     color: AppColors.textSub,
   },
+  toastContainer: {
+    position: "absolute",
+    bottom: 40,
+    left: 24,
+    right: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 16,
+    ...SoftShadow,
+    zIndex: 1000,
+    elevation: 10,
+  },
+  toastSuccess: {
+    backgroundColor: AppColors.mintSoft,
+    borderWidth: 1,
+    borderColor: "#BDEFE4",
+  },
+  toastError: {
+    backgroundColor: AppColors.riskSoft,
+    borderWidth: 1,
+    borderColor: "#FFC6CE",
+  },
+  toastText: {
+    marginLeft: 10,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  toastTextSuccess: {
+    color: AppColors.safe,
+  },
+  toastTextError: {
+    color: AppColors.risk,
+  },
 });
-
-
-

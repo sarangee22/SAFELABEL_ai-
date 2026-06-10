@@ -83,7 +83,9 @@ export default function HistoryScreen() {
       setIsLoading(true);
 
       const savedHistory = await AsyncStorage.getItem(ANALYSIS_HISTORY_KEY);
-      const parsedHistory: unknown[] = savedHistory ? JSON.parse(savedHistory) : [];
+      const parsedHistory: unknown[] = savedHistory
+        ? JSON.parse(savedHistory)
+        : [];
       const singleHistory = parsedHistory.filter(isSingleAnalysis);
 
       setHistoryItems(singleHistory);
@@ -91,7 +93,7 @@ export default function HistoryScreen() {
       console.log("분석 기록 불러오기 실패:", error);
       showMessage(
         "불러오기 실패",
-        "분석 기록을 불러오는 중 문제가 발생했습니다."
+        "분석 기록을 불러오는 중 문제가 발생했습니다.",
       );
     } finally {
       setIsLoading(false);
@@ -101,12 +103,12 @@ export default function HistoryScreen() {
   useFocusEffect(
     useCallback(() => {
       loadHistory();
-    }, [loadHistory])
+    }, [loadHistory]),
   );
 
   const highRiskCount = useMemo(
     () => historyItems.filter((item) => item.riskLevel === "high").length,
-    [historyItems]
+    [historyItems],
   );
 
   const handleOpenDetail = (item: SingleAnalysis) => {
@@ -150,7 +152,10 @@ export default function HistoryScreen() {
       }
     } catch (error) {
       console.log("PDF 저장 실패:", error);
-      showMessage("PDF 저장 실패", "PDF 생성 또는 공유 중 오류가 발생했습니다.");
+      showMessage(
+        "PDF 저장 실패",
+        "PDF 생성 또는 공유 중 오류가 발생했습니다.",
+      );
     }
   };
 
@@ -197,7 +202,11 @@ export default function HistoryScreen() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <View style={styles.iconBox}>
-          <Ionicons name="clipboard-outline" size={28} color={AppColors.primary} />
+          <Ionicons
+            name="clipboard-outline"
+            size={28}
+            color={AppColors.primary}
+          />
         </View>
 
         <View style={styles.headerTextBox}>
@@ -235,7 +244,11 @@ export default function HistoryScreen() {
       <View style={styles.list}>
         {isLoading ? (
           <View style={styles.emptyBox}>
-            <Ionicons name="hourglass-outline" size={34} color={AppColors.textMuted} />
+            <Ionicons
+              name="hourglass-outline"
+              size={34}
+              color={AppColors.textMuted}
+            />
             <Text style={styles.emptyTitle}>기록을 불러오는 중입니다</Text>
             <Text style={styles.emptyText}>
               저장된 분석 결과를 확인하고 있습니다.
@@ -252,7 +265,11 @@ export default function HistoryScreen() {
           ))
         ) : (
           <View style={styles.emptyBox}>
-            <Ionicons name="document-text-outline" size={34} color={AppColors.textMuted} />
+            <Ionicons
+              name="document-text-outline"
+              size={34}
+              color={AppColors.textMuted}
+            />
             <Text style={styles.emptyTitle}>아직 기록이 없습니다</Text>
             <Text style={styles.emptyText}>
               성분표를 촬영하거나 갤러리에서 불러오면 분석 기록이 저장됩니다.
@@ -277,7 +294,9 @@ function SingleHistoryCard({
   const riskLabel = getRiskLabel(item.riskLevel);
   const cautionCount = item.cautionIngredients.length;
   const ingredients = item.mainIngredients || [];
-  const publicMatchedCount = countPublicDataMatched(item.matchedIngredients || []);
+  const publicMatchedCount = countPublicDataMatched(
+    item.matchedIngredients || [],
+  );
 
   return (
     <View style={styles.historyCard}>
@@ -289,7 +308,11 @@ function SingleHistoryCard({
         <View style={styles.cardMainInfo}>
           <View style={styles.typeRow}>
             <View style={styles.singleTypeBadge}>
-              <Ionicons name="scan-outline" size={13} color={AppColors.primary} />
+              <Ionicons
+                name="scan-outline"
+                size={13}
+                color={AppColors.primary}
+              />
               <Text style={styles.singleTypeText}>단일 분석</Text>
             </View>
             <Text style={styles.dateText}>{formatDate(item.date)}</Text>
@@ -374,7 +397,11 @@ function CardActions({
       </Pressable>
 
       <Pressable style={styles.pdfButton} onPress={onSavePdf}>
-        <Ionicons name="document-text-outline" size={17} color={AppColors.primary} />
+        <Ionicons
+          name="document-text-outline"
+          size={17}
+          color={AppColors.primary}
+        />
         <Text style={styles.pdfButtonText}>PDF 저장</Text>
       </Pressable>
     </View>
@@ -783,10 +810,8 @@ function generateSimpleHtmlForAnalysis(item: SingleAnalysis) {
       <p>${safe(item.recommendation)}</p>
 
       <h2>위험 점수</h2>
-      <p>${typeof item.riskScore !== 'undefined' ? item.riskScore : '-'}</p>
+      <p>${typeof item.riskScore !== "undefined" ? item.riskScore : "-"}</p>
     </body>
   </html>
   `;
 }
-
-

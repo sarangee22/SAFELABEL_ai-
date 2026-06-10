@@ -1,6 +1,6 @@
+import { AppColors } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { AppColors } from "@/constants/theme";
 
 export default function RootLayout() {
   return (
@@ -72,12 +72,12 @@ export default function RootLayout() {
       />
 
       <Tabs.Screen
-        name="profile"
+        name="ingredients"
         options={{
-          title: "프로필",
+          title: "성분사전",
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? "person" : "person-outline"}
+              name={focused ? "book" : "book-outline"}
               size={24}
               color={color}
             />
@@ -86,12 +86,12 @@ export default function RootLayout() {
       />
 
       <Tabs.Screen
-        name="ingredients"
+        name="profile"
         options={{
-          title: "성분사전",
+          title: "프로필",
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? "book" : "book-outline"}
+              name={focused ? "person" : "person-outline"}
               size={24}
               color={color}
             />

@@ -6,22 +6,40 @@ const axios = require("axios");
 
 const app = express();
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 4000;
 const SERVICE_KEY = process.env.PUBLIC_DATA_SERVICE_KEY;
 const INGREDIENT_API_URL = process.env.COSMETIC_INGREDIENT_API_URL;
 const RESTRICTED_API_URL = process.env.COSMETIC_RESTRICTED_API_URL;
-const { enrichIngredientWithPublicData } = require("./services/publicDataService");
-const { generateIngredientSummary } = require("./services/openAiAnalysisService");
-const { generateCosmeticAiAnalysis } = require("./services/openAiAnalysisService");
+const {
+  enrichIngredientWithPublicData,
+} = require("./services/publicDataService");
+const {
+  generateIngredientSummary,
+} = require("./services/openAiAnalysisService");
+const {
+  generateCosmeticAiAnalysis,
+} = require("./services/openAiAnalysisService");
 const { performClovaOCR } = require("./services/clovaOcrService");
 const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 const { calculatePersonalRiskScore } = require("./services/riskCalculator");
 
 console.log("DEBUG: PUBLIC_DATA_SERVICE_KEY present:", !!SERVICE_KEY);
-console.log("DEBUG: PUBLIC_DATA_SERVICE_KEY length:", SERVICE_KEY ? SERVICE_KEY.length : 0);
+console.log(
+  "DEBUG: PUBLIC_DATA_SERVICE_KEY length:",
+  SERVICE_KEY ? SERVICE_KEY.length : 0,
+);
 
-app.use(cors());
+app.use(
+  cors({
+    origin: "*", // 모든 출처 허용 (보안이 필요하다면 ['http://localhost:8081'] 등 명시)
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+  }),
+);
 app.use(express.json());
 
 let ingredientCache = [];
@@ -34,6 +52,25 @@ function normalizeText(value) {
     .replace(/\s/g, "")
     .replace(/[()［］\[\]{}]/g, "")
     .trim();
+}
+
+function serverNormalize(value) {
+  if (!value) return "";
+  return String(value)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^0-9a-z가-힣\s]+/gi, " ")
+    .toLowerCase()
+    .trim();
+}
+
+function serverTokensOf(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^0-9a-z가-힣\s]+/gi, " ")
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function getItemsFromPublicDataResponse(responseData) {
@@ -67,10 +104,7 @@ function normalizeIngredientItem(item) {
       item?.englishName ||
       "",
 
-    casNo:
-      item?.CAS_NO ||
-      item?.casNo ||
-      "",
+    casNo: item?.CAS_NO || item?.casNo || "",
 
     originDefinition:
       item?.ORIGIN_MAJOR_KOR_NAME ||
@@ -141,10 +175,7 @@ function normalizeRestrictedItem(item) {
       item?.ENG_NM ||
       "",
 
-    casNo:
-      item?.CAS_NO ||
-      item?.casNo ||
-      "",
+    casNo: item?.CAS_NO || item?.casNo || "",
 
     synonyms:
       item?.INGR_SYNONYM ||
@@ -163,10 +194,7 @@ function normalizeRestrictedItem(item) {
       "",
 
     noticeIngredientName:
-      item?.NOTICE_INGR_NAME ||
-      item?.NTFC_INGR_NM ||
-      item?.ntfcIngrNm ||
-      "",
+      item?.NOTICE_INGR_NAME || item?.NTFC_INGR_NM || item?.ntfcIngrNm || "",
 
     condition:
       item?.LIMIT_COND ||
@@ -204,9 +232,15 @@ async function fetchPublicDataPage(apiUrl, pageNo = 1, numOfRows = 100) {
     if (err.response) {
       try {
         console.log("PUBLIC API ERROR STATUS:", err.response.status);
-        console.log("PUBLIC API ERROR DATA:", JSON.stringify(err.response.data).slice(0,2000));
+        console.log(
+          "PUBLIC API ERROR DATA:",
+          JSON.stringify(err.response.data).slice(0, 2000),
+        );
       } catch (e) {
-        console.log("PUBLIC API ERROR (unable to stringify response):", e.message);
+        console.log(
+          "PUBLIC API ERROR (unable to stringify response):",
+          e.message,
+        );
       }
     }
     throw err;
@@ -235,7 +269,7 @@ async function syncPublicData() {
   const ingredients = await fetchAllPages(
     INGREDIENT_API_URL,
     normalizeIngredientItem,
-    10
+    10,
   );
 
   ingredientCache = ingredients;
@@ -245,7 +279,7 @@ async function syncPublicData() {
       restrictedCache = await fetchAllPages(
         RESTRICTED_API_URL,
         normalizeRestrictedItem,
-        5
+        5,
       );
     } catch (error) {
       console.warn("사용제한 원료정보 동기화 실패:", error.message);
@@ -269,7 +303,7 @@ async function syncPublicData() {
       INGR_KOR_NM: item.INGR_KOR_NM,
       INGR_ENG_NM: item.INGR_ENG_NM,
       ITEM_NAME: item.ITEM_NAME,
-    }))
+    })),
   );
 
   return {
@@ -284,7 +318,11 @@ function buildSearchText(item) {
 
   function flatten(value) {
     if (value == null) return;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
       values.push(String(value));
       return;
     }
@@ -299,9 +337,7 @@ function buildSearchText(item) {
 
   flatten(item);
 
-  return values
-    .map((value) => String(value || "").toLowerCase())
-    .join(" ");
+  return values.map((value) => String(value || "").toLowerCase()).join(" ");
 }
 
 function searchIngredientCache(keyword) {
@@ -314,7 +350,7 @@ function searchIngredientCache(keyword) {
       ingredientCache.slice(0, 5).map((item) => ({
         raw: item,
         searchText: buildSearchText(item),
-      }))
+      })),
     );
   }
 
@@ -346,7 +382,9 @@ function findRestrictedInfo(ingredient) {
       .map(normalizeText);
 
     return targetNames.some((target) =>
-      restrictedValues.some((value) => value && target && value.includes(target))
+      restrictedValues.some(
+        (value) => value && target && value.includes(target),
+      ),
     );
   });
 }
@@ -358,7 +396,7 @@ function splitIngredientsText(text) {
       String(value || "")
         .replace(/[%€$£]|mg|ml|g|\d+\s*ml|\d+\s*mg/gi, "")
         .replace(/["'`·••]/g, "")
-        .trim()
+        .trim(),
     )
     .map((v) => v.replace(/^[^0-9a-zA-Z가-힣]+|[^0-9a-zA-Z가-힣]+$/g, ""))
     .map((v) => v.trim())
@@ -377,7 +415,11 @@ function levenshtein(a, b) {
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost,
+      );
     }
   }
   return dp[m][n];
@@ -395,7 +437,7 @@ function simplifyOriginDefinition(text) {
 
   origin = origin.replace(
     /이\s*원료는\s*(?:주로\s*)?다음의\s*구조를\s*갖는/gi,
-    "이 원료는"
+    "이 원료는",
   );
   origin = origin.replace(/다음의\s*구조를\s*갖는/gi, "");
   origin = origin.replace(/\s+/g, " ").trim();
@@ -447,12 +489,20 @@ function buildPublicDataSummary(item) {
 }
 
 function isWeakSummary(summary) {
-  const normalized = String(summary || "").trim().toLowerCase();
+  const normalized = String(summary || "")
+    .trim()
+    .toLowerCase();
   return (
     !normalized ||
-    normalized.includes("공공데이터 원본에는 해당 성분에 대한 구체적인 설명이 없습니다.") ||
-    normalized.includes("공공데이터 원본 정보가 있으나 사용자용 요약이 아직 없습니다.") ||
-    normalized.includes("공공데이터에서는 해당 원료를 유기화합물로 분류하고 있습니다.") ||
+    normalized.includes(
+      "공공데이터 원본에는 해당 성분에 대한 구체적인 설명이 없습니다.",
+    ) ||
+    normalized.includes(
+      "공공데이터 원본 정보가 있으나 사용자용 요약이 아직 없습니다.",
+    ) ||
+    normalized.includes(
+      "공공데이터에서는 해당 원료를 유기화합물로 분류하고 있습니다.",
+    ) ||
     /구조를 갖는|유기화합물이다/.test(normalized)
   );
 }
@@ -472,14 +522,21 @@ async function maybeEnhanceSummary(item, currentSummary) {
   const enriched = await enrichIngredientWithPublicData(lookupName);
 
   if (enriched.hasPublicData && enriched.userSummary) {
-    const enhancedDefinition = String(enriched.userSummary.definition || "").trim();
-    const simpleSummary = String(enriched.userSummary.simpleSummary || "").trim();
+    const enhancedDefinition = String(
+      enriched.userSummary.definition || "",
+    ).trim();
+    const simpleSummary = String(
+      enriched.userSummary.simpleSummary || "",
+    ).trim();
 
     if (enhancedDefinition && !isWeakSummary(enhancedDefinition)) {
       return enhancedDefinition;
     }
 
-    if (simpleSummary && !simpleSummary.includes("직접 확인된 정보가 없습니다")) {
+    if (
+      simpleSummary &&
+      !simpleSummary.includes("직접 확인된 정보가 없습니다")
+    ) {
       return simpleSummary;
     }
   }
@@ -495,36 +552,79 @@ async function maybeEnhanceSummary(item, currentSummary) {
 }
 
 function findMatchedIngredient(name) {
-  const normalizedName = normalizeText(name);
+  const normalizedName = serverNormalize(name);
 
-  // quick reject
   if (!normalizedName) return null;
 
-  // iterate and try exact / contains / alias / fuzzy
+  const inputTokens = serverTokensOf(name);
+
   for (const item of ingredientCache) {
-    const koreanName = normalizeText(item.koreanName || item.standardName || "");
-    const englishName = normalizeText(item.englishName || "");
+    const candidates = [
+      item.koreanName,
+      item.englishName,
+      item.synonyms,
+      item.name,
+      item.rawName,
+      item.ingredientName,
+    ]
+      .filter(Boolean)
+      .map((s) => String(s));
+
+    const normCandidates = candidates.map(serverNormalize);
+
+    // exact or contains
+    if (normCandidates.includes(normalizedName)) return item;
+    if (
+      normCandidates.some(
+        (n) => n && (n.includes(normalizedName) || normalizedName.includes(n)),
+      )
+    )
+      return item;
+
+    // token overlap scoring
+    for (const n of normCandidates) {
+      if (!n) continue;
+      const candTokens = serverTokensOf(n);
+      if (candTokens.length === 0 || inputTokens.length === 0) continue;
+      const intersection = candTokens.filter((t) => inputTokens.includes(t));
+      const score =
+        intersection.length / Math.max(candTokens.length, inputTokens.length);
+      if (score >= 0.5 || intersection.length >= 2) return item;
+      if (
+        intersection.length >= 1 &&
+        (candTokens.some((t) => t.length >= 4) ||
+          inputTokens.some((t) => t.length >= 4))
+      )
+        return item;
+    }
+
+    // aliases split and fuzzy check
     const synonymsRaw = String(item.synonyms || item.aliases || "");
     const aliases = synonymsRaw
       .split(/,|\/|;|\||\(|\)|\s{2,}/)
-      .map((s) => normalizeText(s))
+      .map((s) => serverNormalize(s))
       .filter(Boolean);
 
-    // direct checks
-    if (koreanName === normalizedName || englishName === normalizedName) return item;
-    if (koreanName.includes(normalizedName) || englishName.includes(normalizedName)) return item;
-
-    // aliases
     for (const a of aliases) {
       if (!a) continue;
-      if (a === normalizedName || a.includes(normalizedName) || normalizedName.includes(a)) return item;
+      if (
+        a === normalizedName ||
+        a.includes(normalizedName) ||
+        normalizedName.includes(a)
+      )
+        return item;
     }
 
-    // fuzzy: allow small edit distance relative to length
-    const threshold = Math.max(1, Math.floor(Math.min(3, normalizedName.length * 0.2)));
+    // fuzzy fallback (small edit distance relative to length)
+    const threshold = Math.max(
+      1,
+      Math.floor(Math.min(3, normalizedName.length * 0.2)),
+    );
     try {
-      if (levenshtein(koreanName, normalizedName) <= threshold) return item;
-      if (levenshtein(englishName, normalizedName) <= threshold) return item;
+      for (const n of normCandidates) {
+        if (!n) continue;
+        if (levenshtein(n, normalizedName) <= threshold) return item;
+      }
       for (const a of aliases) {
         if (levenshtein(a, normalizedName) <= threshold) return item;
       }
@@ -604,7 +704,7 @@ app.get("/api/ingredients/search", async (req, res) => {
           isRestricted: Boolean(restrictedInfo),
           restrictedInfo: restrictedInfo || null,
         };
-      })
+      }),
     );
 
     res.json({
@@ -660,7 +760,7 @@ app.post("/api/analyze", async (req, res) => {
     });
 
     const cautionIngredients = matchedIngredients.filter(
-      (item) => item.isRestricted
+      (item) => item.isRestricted,
     );
 
     const totalCount = detectedNames.length;
@@ -717,21 +817,41 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
         skinType: req.body.skinType || "",
         sensitivity: req.body.sensitivity || "",
         allergies: req.body.allergies ? JSON.parse(req.body.allergies) : [],
-        avoidIngredients: req.body.avoidIngredients ? JSON.parse(req.body.avoidIngredients) : [],
+        avoidIngredients: req.body.avoidIngredients
+          ? JSON.parse(req.body.avoidIngredients)
+          : [],
       };
     } catch (e) {
-      userProfile = { skinType: "", sensitivity: "", allergies: [], avoidIngredients: [] };
+      userProfile = {
+        skinType: "",
+        sensitivity: "",
+        allergies: [],
+        avoidIngredients: [],
+      };
     }
 
     // Call CLOVA OCR
-    const ocrResponse = await performClovaOCR(req.file.buffer, req.file.originalname || "upload.jpg");
+    const ocrResponse = await performClovaOCR(
+      req.file.buffer,
+      req.file.originalname || "upload.jpg",
+    );
 
     // Extract text from common Clova response shapes
     let ocrText = "";
     try {
-      if (ocrResponse?.images && Array.isArray(ocrResponse.images) && ocrResponse.images[0]?.fields) {
-        ocrText = ocrResponse.images[0].fields.map((f) => f.inferText || "").join(" ");
-      } else if (ocrResponse?.outputs && Array.isArray(ocrResponse.outputs) && ocrResponse.outputs[0]?.data?.text) {
+      if (
+        ocrResponse?.images &&
+        Array.isArray(ocrResponse.images) &&
+        ocrResponse.images[0]?.fields
+      ) {
+        ocrText = ocrResponse.images[0].fields
+          .map((f) => f.inferText || "")
+          .join(" ");
+      } else if (
+        ocrResponse?.outputs &&
+        Array.isArray(ocrResponse.outputs) &&
+        ocrResponse.outputs[0]?.data?.text
+      ) {
         ocrText = String(ocrResponse.outputs[0].data.text || "");
       } else if (typeof ocrResponse === "string") {
         ocrText = ocrResponse;
@@ -745,8 +865,15 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
     const detectedNames = splitIngredientsText(ocrText);
 
     // Helpful debug logs to inspect OCR raw output and tokens
-    console.log("OCR RAW TEXT:", ocrText ? (ocrText.length > 1000 ? ocrText.slice(0,1000) + '...' : ocrText) : "(empty)");
-    console.log("OCR TOKENS:", detectedNames.slice(0,50));
+    console.log(
+      "OCR RAW TEXT:",
+      ocrText
+        ? ocrText.length > 1000
+          ? ocrText.slice(0, 1000) + "..."
+          : ocrText
+        : "(empty)",
+    );
+    console.log("OCR TOKENS:", detectedNames.slice(0, 50));
 
     const matchedIngredients = [];
     const unmatchedIngredients = [];
@@ -764,7 +891,9 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
           description: matched.originDefinition || "",
           isMatched: true,
           isRestricted: Boolean(restrictedInfo),
-          restrictedReason: restrictedInfo ? (restrictedInfo.condition || "") : "",
+          restrictedReason: restrictedInfo
+            ? restrictedInfo.condition || ""
+            : "",
           isAllergen: false,
           allergenReason: "",
           riskWeight: matched.riskWeight || 0,
@@ -775,24 +904,33 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
       }
     });
 
-    const cautionIngredients = matchedIngredients.filter((i) => i.isRestricted).map((i) => i.standardName || i.originalName);
+    const cautionIngredients = matchedIngredients
+      .filter((i) => i.isRestricted)
+      .map((i) => i.standardName || i.originalName);
 
     // Calculate personal risk
-    const riskResult = calculatePersonalRiskScore(matchedIngredients, userProfile);
+    const riskResult = calculatePersonalRiskScore(
+      matchedIngredients,
+      userProfile,
+    );
 
     // Build simple fallback summary/recommendation
-    const fallbackSummary = matchedIngredients.length > 0
-      ? `다음 성분이 감지되었습니다: ${matchedIngredients.map((i) => i.originalName).join(", ")}`
-      : "OCR로 추출된 성분을 찾을 수 없습니다.";
+    const fallbackSummary =
+      matchedIngredients.length > 0
+        ? `다음 성분이 감지되었습니다: ${matchedIngredients.map((i) => i.originalName).join(", ")}`
+        : "OCR로 추출된 성분을 찾을 수 없습니다.";
 
-    const fallbackRecommendation = "민감 피부이거나 알레르기 이력이 있다면 사용 전 패치 테스트를 권장합니다.";
+    const fallbackRecommendation =
+      "민감 피부이거나 알레르기 이력이 있다면 사용 전 패치 테스트를 권장합니다.";
 
     // Ask AI for a concise summary/recommendation when possible
     const aiResult = await generateCosmeticAiAnalysis({
       productName: req.body.productName || "",
       riskScore: riskResult.riskScore,
       riskLevel: riskResult.riskLevel,
-      mainIngredients: matchedIngredients.map((i) => i.standardName || i.originalName),
+      mainIngredients: matchedIngredients.map(
+        (i) => i.standardName || i.originalName,
+      ),
       cautionIngredients,
       matchedIngredients,
       riskReasons: riskResult.reasons,
@@ -807,8 +945,20 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
       totalCount: detectedNames.length,
       matchedCount: matchedIngredients.length,
       unmatchedCount: unmatchedIngredients.length,
-      matchRate: detectedNames.length === 0 ? 0 : Math.round((matchedIngredients.length / detectedNames.length) * 100),
-      confidence: detectedNames.length === 0 ? "낮음" : (matchedIngredients.length / detectedNames.length) >= 0.8 ? "높음" : (matchedIngredients.length / detectedNames.length) >= 0.5 ? "보통" : "낮음",
+      matchRate:
+        detectedNames.length === 0
+          ? 0
+          : Math.round(
+              (matchedIngredients.length / detectedNames.length) * 100,
+            ),
+      confidence:
+        detectedNames.length === 0
+          ? "낮음"
+          : matchedIngredients.length / detectedNames.length >= 0.8
+            ? "높음"
+            : matchedIngredients.length / detectedNames.length >= 0.5
+              ? "보통"
+              : "낮음",
       matchedIngredients,
       unmatchedIngredients,
       cautionIngredients,
@@ -822,8 +972,14 @@ app.post("/api/ocr/analyze", upload.single("image"), async (req, res) => {
       type: "single",
     });
   } catch (error) {
-    console.error("OCR 분석 오류:", error && error.message ? error.message : error);
-    res.status(500).json({ message: "OCR 분석 실패", error: error?.message || String(error) });
+    console.error(
+      "OCR 분석 오류:",
+      error && error.message ? error.message : error,
+    );
+    res.status(500).json({
+      message: "OCR 분석 실패",
+      error: error?.message || String(error),
+    });
   }
 });
 

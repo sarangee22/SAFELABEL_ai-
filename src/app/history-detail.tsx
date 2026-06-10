@@ -8,15 +8,15 @@ import { router, useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from "react-native";
 
 const ANALYSIS_HISTORY_KEY = "safelabel_analysis_history";
@@ -136,13 +136,13 @@ export default function HistoryDetailScreen() {
       const history: unknown[] = savedHistory ? JSON.parse(savedHistory) : [];
       const singleHistory = history.filter(isSingleAnalysis);
       const targetItem = singleHistory.find(
-        (item) => String(item.id) === String(id)
+        (item) => String(item.id) === String(id),
       );
 
       if (!targetItem) {
         Alert.alert(
           "기록 없음",
-          "해당 분석 기록을 찾을 수 없거나 지원하지 않는 기록입니다."
+          "해당 분석 기록을 찾을 수 없거나 지원하지 않는 기록입니다.",
         );
         setHistoryItem(null);
         return;
@@ -153,7 +153,7 @@ export default function HistoryDetailScreen() {
       console.log("분석 상세 불러오기 실패:", error);
       Alert.alert(
         "불러오기 실패",
-        "분석 상세 정보를 불러오는 중 문제가 발생했습니다."
+        "분석 상세 정보를 불러오는 중 문제가 발생했습니다.",
       );
     } finally {
       setIsLoading(false);
@@ -175,19 +175,21 @@ export default function HistoryDetailScreen() {
       try {
         const html = generateSimpleHtmlForAnalysis(historyItem);
 
+        const { uri } = await Print.printToFileAsync({ html });
+
         if (Platform.OS === "web") {
-          const blob = new Blob([html], { type: "text/html" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `${historyItem.productName || "analysis"}-${historyItem.id}.html`;
-          a.click();
-          URL.revokeObjectURL(url);
-          Alert.alert("내보내기 완료", "분석 결과 HTML 파일을 다운로드했습니다.");
+          const link = document.createElement("a");
+          link.href = uri;
+          link.download = `${historyItem.productName || "analysis"}-${historyItem.id}.pdf`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          Alert.alert(
+            "내보내기 완료",
+            "분석 결과 PDF 파일을 다운로드했습니다.",
+          );
           return;
         }
-
-        const { uri } = await Print.printToFileAsync({ html });
 
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(uri, {
@@ -196,13 +198,16 @@ export default function HistoryDetailScreen() {
             UTI: "com.adobe.pdf",
           });
         } else {
-            const dest = `${(FileSystem as any).documentDirectory}safelabel-analysis-${historyItem.id}.pdf`;
-            await FileSystem.copyAsync({ from: uri, to: dest });
+          const dest = `${(FileSystem as any).documentDirectory}safelabel-analysis-${historyItem.id}.pdf`;
+          await FileSystem.copyAsync({ from: uri, to: dest });
           Alert.alert("저장 완료", `파일을 저장했습니다: ${dest}`);
         }
       } catch (e) {
         console.log("PDF 저장 실패:", e);
-        Alert.alert("PDF 저장 실패", "PDF 생성 또는 공유 중 오류가 발생했습니다.");
+        Alert.alert(
+          "PDF 저장 실패",
+          "PDF 생성 또는 공유 중 오류가 발생했습니다.",
+        );
       }
     })();
   };
@@ -219,7 +224,11 @@ export default function HistoryDetailScreen() {
   if (!historyItem) {
     return (
       <View style={styles.emptyScreen}>
-        <Ionicons name="document-text-outline" size={42} color={AppColors.textMuted} />
+        <Ionicons
+          name="document-text-outline"
+          size={42}
+          color={AppColors.textMuted}
+        />
         <Text style={styles.emptyTitle}>기록을 찾을 수 없습니다</Text>
         <Text style={styles.emptyText}>
           해당 분석 기록을 찾을 수 없거나 지원하지 않는 기록입니다.
@@ -241,9 +250,7 @@ export default function HistoryDetailScreen() {
 
         <Text style={styles.topTitle}>분석 상세</Text>
 
-        <Pressable style={styles.iconButton} onPress={handleSavePdf}>
-          <Ionicons name="document-text-outline" size={22} color={AppColors.primary} />
-        </Pressable>
+        <View style={styles.iconButton} />
       </View>
 
       <SingleDetail item={historyItem} />
@@ -287,7 +294,7 @@ function generateSimpleHtmlForAnalysis(item: SingleAnalysis) {
       <p>${safe(item.recommendation)}</p>
 
       <h2>위험 점수</h2>
-      <p>${typeof item.riskScore !== 'undefined' ? item.riskScore : '-'}</p>
+      <p>${typeof item.riskScore !== "undefined" ? item.riskScore : "-"}</p>
     </body>
   </html>
   `;
@@ -296,7 +303,9 @@ function generateSimpleHtmlForAnalysis(item: SingleAnalysis) {
 function SingleDetail({ item }: { item: SingleAnalysis }) {
   const riskColor = getRiskColor(item.riskLevel);
   const riskLabel = getRiskLabel(item.riskLevel);
-  const publicDataMatchedCount = countPublicDataMatched(item.matchedIngredients || []);
+  const publicDataMatchedCount = countPublicDataMatched(
+    item.matchedIngredients || [],
+  );
   const isOpenAiSummary = item.aiProvider === "openai";
   const summaryTitle = isOpenAiSummary ? "AI 요약" : "분석 요약";
   const recommendationTitle = isOpenAiSummary ? "AI 추천" : "추천 안내";
@@ -328,7 +337,15 @@ function SingleDetail({ item }: { item: SingleAnalysis }) {
             </Text>
           </View>
 
-          <View style={[styles.riskBadge, { backgroundColor: riskColor.bg }]}>
+          <View
+            style={[
+              styles.riskBadge,
+              {
+                backgroundColor: riskColor.bg,
+                borderColor: (riskColor as any).border,
+              },
+            ]}
+          >
             <Text style={[styles.riskBadgeText, { color: riskColor.text }]}>
               {riskLabel}
             </Text>
@@ -352,22 +369,14 @@ function SingleDetail({ item }: { item: SingleAnalysis }) {
         <Text style={styles.bodyText}>{item.summary}</Text>
       </Section>
 
-      <Section title={recommendationTitle} icon="bulb-outline" meta={sourceLabel}>
+      <Section
+        title={recommendationTitle}
+        icon="bulb-outline"
+        meta={sourceLabel}
+      >
         <Text style={styles.bodyText}>
           {item.recommendation || "추천 정보가 없습니다."}
         </Text>
-      </Section>
-
-      <Section title="공공데이터 적용 현황" icon="server-outline">
-        <View style={styles.publicSummaryBox}>
-          <Text style={styles.publicSummaryTitle}>
-            공공데이터 매칭 성분 {publicDataMatchedCount}개
-          </Text>
-          <Text style={styles.publicSummaryText}>
-            OCR로 추출한 성분을 식약처 공공데이터의 원료 성분 정보,
-            사용 제한 정보, 규제 정보와 대조한 결과입니다.
-          </Text>
-        </View>
       </Section>
 
       <Section title="주의 성분" icon="warning-outline">
@@ -378,52 +387,28 @@ function SingleDetail({ item }: { item: SingleAnalysis }) {
         </Text>
       </Section>
 
-      <Section title="주요 성분" icon="flask-outline">
-        <Text style={styles.bodyText}>
-          {item.mainIngredients.length > 0
-            ? item.mainIngredients.join(", ")
-            : "추출된 성분이 없습니다."}
-        </Text>
-      </Section>
+      {item.riskReasons && item.riskReasons.length > 0 && (
+        <Section title="위험도 판단 근거" icon="alert-circle-outline">
+          {item.riskReasons.map((reason, idx) => (
+            <View key={idx} style={styles.reasonCard}>
+              <Text style={styles.reasonIngredient}>{reason.ingredient}</Text>
+              <Text style={styles.reasonText}>{reason.reason}</Text>
+            </View>
+          ))}
+        </Section>
+      )}
 
-      <Section title="공공데이터 매칭 성분" icon="library-outline">
-        {item.matchedIngredients && item.matchedIngredients.length > 0 ? (
-          item.matchedIngredients.map((ingredient, index) => (
-            <IngredientPublicDataCard
-              key={`${ingredient.standardName || ingredient.originalName}-${index}`}
-              ingredient={ingredient}
-            />
-          ))
-        ) : (
-          <Text style={styles.bodyText}>매칭된 성분 정보가 없습니다.</Text>
-        )}
-      </Section>
-
-      <Section title="위험도 판단 근거" icon="analytics-outline">
-        {item.riskReasons && item.riskReasons.length > 0 ? (
-          item.riskReasons.map((reason, index) => {
-            const reasonLines = formatRestrictionInfo(reason.reason);
-            return (
-              <View key={`${reason.ingredient}-${index}`} style={styles.reasonCard}>
-                <Text style={styles.reasonIngredient}>{reason.ingredient}</Text>
-                {reasonLines.length > 0 ? (
-                  reasonLines.map((line, lineIndex) => (
-                    <Text key={lineIndex} style={styles.reasonText}>
-                      • {line}
-                    </Text>
-                  ))
-                ) : (
-                  <Text style={styles.reasonText}>{reason.reason}</Text>
-                )}
-              </View>
-            );
-          })
-        ) : (
-          <Text style={styles.bodyText}>
-            현재 기준에서는 별도의 위험도 상승 근거가 감지되지 않았습니다.
-          </Text>
-        )}
-      </Section>
+      {item.matchedIngredients && item.matchedIngredients.length > 0 && (
+        <Section
+          title="인식된 성분 및 공공데이터"
+          icon="flask-outline"
+          meta={`${item.matchedIngredients.length}개 성분`}
+        >
+          {item.matchedIngredients.map((ing, idx) => (
+            <IngredientPublicDataCard key={idx} ingredient={ing} />
+          ))}
+        </Section>
+      )}
     </>
   );
 }
@@ -490,8 +475,8 @@ function IngredientPublicDataCard({
             {hasAnyPublicData
               ? "공공데이터"
               : ingredient.isMatched
-              ? "로컬 매칭"
-              : "미매칭"}
+                ? "로컬 매칭"
+                : "미매칭"}
           </Text>
         </View>
       </View>
@@ -507,7 +492,9 @@ function IngredientPublicDataCard({
         <Text style={styles.ingredientSub}>영문명: {englishName}</Text>
       ) : null}
 
-      {casNo ? <Text style={styles.publicDataText}>CAS No: {casNo}</Text> : null}
+      {casNo ? (
+        <Text style={styles.publicDataText}>CAS No: {casNo}</Text>
+      ) : null}
 
       {description ? (
         <Text style={styles.ingredientDescription}>{description}</Text>
@@ -640,16 +627,16 @@ function isSingleAnalysis(item: unknown): item is SingleAnalysis {
 
 function getBestIngredientInfo(
   ingredient: MatchedIngredient,
-  ingredientInfo: PublicIngredientInfo[]
+  ingredientInfo: PublicIngredientInfo[],
 ) {
   if (ingredientInfo.length === 0) return null;
 
   const targetName = normalizeName(
-    ingredient.standardName || ingredient.originalName || ""
+    ingredient.standardName || ingredient.originalName || "",
   );
 
   const exactMatch = ingredientInfo.find(
-    (info) => normalizeName(info.INGR_KOR_NAME || "") === targetName
+    (info) => normalizeName(info.INGR_KOR_NAME || "") === targetName,
   );
 
   if (exactMatch) return exactMatch;
@@ -700,18 +687,21 @@ function getRiskColor(level: RiskLevel) {
   switch (level) {
     case "low":
       return {
-        bg: AppColors.mintSoft,
-        text: AppColors.safe,
+        bg: "#ECFDF5",
+        text: "#059669",
+        border: "#6EE7B7",
       };
     case "medium":
       return {
-        bg: AppColors.cautionSoft,
-        text: AppColors.caution,
+        bg: "#FFFBEB",
+        text: "#D97706",
+        border: "#FCD34D",
       };
     case "high":
       return {
-        bg: AppColors.riskSoft,
-        text: AppColors.risk,
+        bg: "#FEE2E2",
+        text: "#DC2626",
+        border: "#FCA5A5",
       };
   }
 }
@@ -862,31 +852,33 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 16,
   },
   scoreLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "800",
     color: AppColors.textMuted,
     marginBottom: 4,
+    letterSpacing: 0.5,
   },
   scoreValue: {
-    fontSize: 34,
+    fontSize: 38,
     fontWeight: "900",
   },
   riskBadge: {
     borderRadius: 999,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderWidth: 2,
   },
   riskBadgeText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
   },
   riskBarBackground: {
-    height: 10,
+    height: 12,
     borderRadius: 999,
-    backgroundColor: AppColors.border,
+    backgroundColor: "#E5E7EB",
     overflow: "hidden",
   },
   riskBarFill: {
@@ -897,7 +889,7 @@ const styles = StyleSheet.create({
     backgroundColor: AppColors.card,
     borderRadius: Radius.card,
     padding: 18,
-    marginBottom: 14,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: AppColors.border,
     ...SoftShadow,
@@ -905,13 +897,14 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   sectionTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: "900",
     color: AppColors.text,
+    letterSpacing: 0.3,
   },
   sectionMeta: {
     marginLeft: "auto",
@@ -948,7 +941,9 @@ const styles = StyleSheet.create({
     backgroundColor: AppColors.background,
     borderRadius: 16,
     padding: 14,
-    marginBottom: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
   ingredientTop: {
     flexDirection: "row",
@@ -957,7 +952,7 @@ const styles = StyleSheet.create({
   },
   ingredientName: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "900",
     color: AppColors.text,
     marginRight: 8,
@@ -977,24 +972,27 @@ const styles = StyleSheet.create({
   },
   matchBadge: {
     borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderWidth: 1.5,
   },
   matchedBadge: {
     backgroundColor: "#E8F7EF",
+    borderColor: AppColors.safe,
   },
   unmatchedBadge: {
-    backgroundColor: AppColors.subCard,
+    backgroundColor: "#F3F4F6",
+    borderColor: "#D1D5DB",
   },
   matchBadgeText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "900",
   },
   matchedBadgeText: {
     color: AppColors.safe,
   },
   unmatchedBadgeText: {
-    color: AppColors.textMuted,
+    color: "#6B7280",
   },
   publicDataBox: {
     backgroundColor: AppColors.primarySoft,
@@ -1015,24 +1013,24 @@ const styles = StyleSheet.create({
     color: AppColors.textSub,
   },
   publicWarningBox: {
-    borderRadius: 12,
-    padding: 11,
-    marginTop: 8,
-    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 10,
+    borderWidth: 1.5,
   },
   publicVerifiedBox: {
-    backgroundColor: AppColors.mintSoft,
-    borderColor: "#BDEFE4",
+    backgroundColor: "#ECFDF5",
+    borderColor: "#86EFAC",
   },
   publicRestrictionBox: {
-    backgroundColor: AppColors.cautionSoft,
-    borderColor: "#F3D58A",
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FCD34D",
   },
   publicWarningTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "900",
-    color: AppColors.caution,
-    marginBottom: 6,
+    color: "#EA580C",
+    marginBottom: 7,
   },
   publicWarningText: {
     fontSize: 13,
@@ -1049,18 +1047,20 @@ const styles = StyleSheet.create({
   warningBox: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 6,
-    backgroundColor: AppColors.riskSoft,
+    gap: 8,
+    backgroundColor: "#FEE2E2",
     borderRadius: 12,
-    padding: 10,
-    marginTop: 9,
+    padding: 12,
+    marginTop: 10,
+    borderWidth: 1.5,
+    borderColor: "#FCA5A5",
   },
   warningText: {
     flex: 1,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: "800",
-    color: AppColors.risk,
+    color: "#DC2626",
   },
   reasonCard: {
     backgroundColor: AppColors.background,
@@ -1080,5 +1080,3 @@ const styles = StyleSheet.create({
     color: "#6B7280",
   },
 });
-
-
